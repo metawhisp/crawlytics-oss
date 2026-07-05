@@ -1,0 +1,10 @@
+203.0.113.10 - frank [10/Jun/2026:03:22:01 +0300] "GET /robots.txt HTTP/1.1" 200 412 "-" "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot"
+2001:db8::1 - - [10/Jun/2026:03:23:02 +0300] "GET /blog/ai-crawlers?utm_source=chatgpt.com HTTP/2" 200 2048 "https://chatgpt.com/" "Mozilla/5.0"
+198.51.100.7 - - [10/Jun/2026:03:24:03 +0300] "GET /empty HTTP/1.1" 204 -
+192.0.2.44 ident user [10/Jun/2026:03:25:04 +0300] "POST /api/events?site=demo&dry=1 HTTP/1.1" 202 64 "https://example.com/admin" "curl/8.8.0"
+198.51.100.22 - - [10/Jun/2026:03:26:05 +0300] "GET /missing-page HTTP/1.0" 404 532 "https://www.google.com/search?q=tracecontrol" "Mozilla/5.0"
+203.0.113.55 - - [10/Jun/2026:03:27:06 +0300] "GET /api/dashboard HTTP/1.1" 503 1024 "-" "Mozilla/5.0 (compatible; uptime-check/1.0)"
+198.51.100.88 - - [10/Jun/2026:03:28:07 +0300] "GET /quoted HTTP/1.1" 200 111 "https://example.com/search?q=\"ai\"" "Mozilla/5.0 \"Trace\""
+203.0.113.10 - frank [10/Jun/2026:03:22:01 +0300] "GET /robots.txt HTTP/1.1" 200 412 "-" "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot"
+203.0.113.99 - - [10/Jun/2026:03:29:08 +0300] "GET"
+203.0.113.100 - - [10/Jun/2026:03:30:09 +0300] "BROKENREQUEST" 200 10 "-" "BadAgent/1.0"

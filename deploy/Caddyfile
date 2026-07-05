@@ -1,0 +1,16 @@
+{
+	email {$CRAWLYTICS_ACME_EMAIL}
+}
+
+{$CRAWLYTICS_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:3000 {
+		# OVERWRITE the client IP header with the real connecting address so a
+		# client cannot spoof it to dodge the login lockout (or lock out the
+		# owner). The app keys its brute-force limiter on X-Real-IP and trusts
+		# nothing else. Behind Cloudflare, terminate real-IP there / use a
+		# trusted_proxies + CF-Connecting-IP setup before this hop.
+		header_up X-Real-IP {http.request.remote.host}
+		header_up -X-Forwarded-For
+	}
+}

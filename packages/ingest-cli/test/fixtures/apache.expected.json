@@ -1,0 +1,82 @@
+[
+  {
+    "ts": "2026-06-10T00:22:01.000Z",
+    "ip": "203.0.113.10",
+    "method": "GET",
+    "path": "/robots.txt",
+    "status": 200,
+    "bytes": 412,
+    "ua": "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot",
+    "referer": ""
+  },
+  {
+    "ts": "2026-06-10T00:23:02.000Z",
+    "ip": "2001:db8::1",
+    "method": "GET",
+    "path": "/blog/ai-crawlers?utm_source=chatgpt.com",
+    "status": 200,
+    "bytes": 2048,
+    "ua": "Mozilla/5.0",
+    "referer": "https://chatgpt.com/"
+  },
+  {
+    "ts": "2026-06-10T00:24:03.000Z",
+    "ip": "198.51.100.7",
+    "method": "GET",
+    "path": "/empty",
+    "status": 204,
+    "bytes": 0,
+    "ua": "",
+    "referer": ""
+  },
+  {
+    "ts": "2026-06-10T00:25:04.000Z",
+    "ip": "192.0.2.44",
+    "method": "POST",
+    "path": "/api/events?site=demo&dry=1",
+    "status": 202,
+    "bytes": 64,
+    "ua": "curl/8.8.0",
+    "referer": "https://example.com/admin"
+  },
+  {
+    "ts": "2026-06-10T00:26:05.000Z",
+    "ip": "198.51.100.22",
+    "method": "GET",
+    "path": "/missing-page",
+    "status": 404,
+    "bytes": 532,
+    "ua": "Mozilla/5.0",
+    "referer": "https://www.google.com/search?q=tracecontrol"
+  },
+  {
+    "ts": "2026-06-10T00:27:06.000Z",
+    "ip": "203.0.113.55",
+    "method": "GET",
+    "path": "/api/dashboard",
+    "status": 503,
+    "bytes": 1024,
+    "ua": "Mozilla/5.0 (compatible; uptime-check/1.0)",
+    "referer": ""
+  },
+  {
+    "ts": "2026-06-10T00:28:07.000Z",
+    "ip": "198.51.100.88",
+    "method": "GET",
+    "path": "/quoted",
+    "status": 200,
+    "bytes": 111,
+    "ua": "Mozilla/5.0 \"Trace\"",
+    "referer": "https://example.com/search?q=\"ai\""
+  },
+  {
+    "ts": "2026-06-10T00:22:01.000Z",
+    "ip": "203.0.113.10",
+    "method": "GET",
+    "path": "/robots.txt",
+    "status": 200,
+    "bytes": 412,
+    "ua": "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot",
+    "referer": ""
+  }
+]

@@ -1,0 +1,11 @@
+Crawlytics includes bot signature data derived from the following MIT-licensed sources:
+
+- ai-robots-txt/ai.robots.txt
+  Source: https://github.com/ai-robots-txt/ai.robots.txt
+  License: MIT
+
+- monperrus/crawler-user-agents
+  Source: https://github.com/monperrus/crawler-user-agents
+  License: MIT
+
+Crawlytics does not embed Dark Visitors / Known Agents proprietary data or Cloudflare Radar CC BY-NC bot data.

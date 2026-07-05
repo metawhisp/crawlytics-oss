@@ -1,0 +1,19 @@
+# Crawlytics sensor — deploy per zone:
+#   cd packages/sensor-cloudflare
+#   wrangler deploy
+#   wrangler secret put TRACECONTROL_KEY   (ingest key for the site)
+# Route and TRACECONTROL_URL are set below.
+
+name = "crawlytics-sensor"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+workers_dev = false
+
+routes = [
+  { pattern = "example.com/*", zone_name = "example.com" },
+  { pattern = "www.example.com/*", zone_name = "example.com" }
+]
+
+[vars]
+# Public URL of the Crawlytics ingest API (cloudflared tunnel during the pilot)
+TRACECONTROL_URL = "https://dashboard.example.com"

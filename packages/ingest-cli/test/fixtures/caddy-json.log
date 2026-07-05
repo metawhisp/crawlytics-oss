@@ -1,0 +1,8 @@
+{"ts":1781050921,"request":{"remote_ip":"203.0.113.10","method":"GET","uri":"/robots.txt","headers":{"User-Agent":["Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot"],"Referer":["-"]}},"status":200,"size":412,"duration":0.123}
+{"ts":1781050982,"request":{"remote_ip":"2001:db8::1","method":"GET","uri":"/blog/ai-crawlers?utm_source=chatgpt.com","headers":{"User-Agent":["Mozilla/5.0"],"Referer":["https://chatgpt.com/"]}},"status":200,"size":2048,"duration":0.045}
+{"ts":1781051043,"request":{"remote_ip":"198.51.100.7","method":"GET","uri":"/empty","headers":{"User-Agent":["-"],"Referer":["-"]}},"status":204,"size":"-"}
+{"ts":1781051104,"request":{"remote_ip":"192.0.2.44","method":"POST","uri":"/api/events?site=demo&dry=1","headers":{"User-Agent":["curl/8.8.0"],"Referer":["https://example.com/admin"]}},"status":202,"size":64,"duration":0.01}
+{"ts":1781051165,"request":{"remote_ip":"198.51.100.22","method":"GET","uri":"/missing-page","headers":{"User-Agent":["Mozilla/5.0"],"Referer":["https://www.google.com/search?q=tracecontrol"]}},"status":404,"size":532}
+{"ts":1781051226,"request":{"remote_ip":"203.0.113.55","method":"GET","uri":"/api/dashboard","headers":{"User-Agent":["Mozilla/5.0 (compatible; uptime-check/1.0)"],"Referer":["-"]}},"status":503,"size":1024,"duration":1.25}
+{"ts":1781051287,"request":{"remote_ip":"198.51.100.88","method":"GET","uri":"/quoted","headers":{"User-Agent":["Mozilla/5.0 \"Trace\""],"Referer":["https://example.com/search?q=\"ai\""]}},"status":200,"size":111}
+{"ts":1781051348,"request":{"remote_ip":"203.0.113.99","method":"GET"},"status":200,"size":1}

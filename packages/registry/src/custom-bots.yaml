@@ -1,0 +1,330 @@
+bots:
+  - bot_id: gptbot
+    operator: openai
+    actor_type: ai_training
+    ua_patterns:
+      - GPTBot
+      - GPTBot/
+    ip_source: https://openai.com/gptbot.json
+    docs_url: https://platform.openai.com/docs/gptbot
+
+  - bot_id: oai-searchbot
+    operator: openai
+    actor_type: ai_search
+    ua_patterns:
+      - OAI-SearchBot
+      - OAI-SearchBot/
+    ip_source: https://openai.com/searchbot.json
+
+  - bot_id: chatgpt-user
+    operator: openai
+    actor_type: ai_fetcher
+    ua_patterns:
+      - ChatGPT-User
+      - ChatGPT-User/
+    ip_source: https://openai.com/chatgpt-user.json
+
+  - bot_id: claudebot
+    operator: anthropic
+    actor_type: ai_training
+    ua_patterns:
+      - ClaudeBot
+      - ClaudeBot/
+    ip_source: https://claude.com/crawling/bots.json
+
+  - bot_id: claude-searchbot
+    operator: anthropic
+    actor_type: ai_search
+    ua_patterns:
+      - Claude-SearchBot
+      - Claude-SearchBot/
+    ip_source: https://claude.com/crawling/bots.json
+
+  - bot_id: claude-user
+    operator: anthropic
+    actor_type: ai_fetcher
+    ua_patterns:
+      - Claude-User
+      - Claude-User/
+    ip_source: https://claude.com/crawling/bots.json
+
+  - bot_id: perplexitybot
+    operator: perplexity
+    actor_type: ai_search
+    ua_patterns:
+      - PerplexityBot
+      - PerplexityBot/
+    ip_source: https://perplexity.com/perplexitybot.json
+
+  - bot_id: perplexity-user
+    operator: perplexity
+    actor_type: ai_fetcher
+    ua_patterns:
+      - Perplexity-User
+      - Perplexity-User/
+    ip_source: https://perplexity.com/perplexity-user.json
+
+  - bot_id: ccbot
+    operator: common-crawl
+    actor_type: ai_training
+    ua_patterns:
+      - CCBot
+      - CCBot/
+    ip_source: https://index.commoncrawl.org/ccbot.json
+    rdns_suffixes:
+      - .crawl.commoncrawl.org
+
+  - bot_id: bytespider
+    operator: bytedance
+    actor_type: ai_training
+    ua_patterns:
+      - Bytespider
+      - Bytespider/
+
+  - bot_id: meta-externalagent
+    operator: meta
+    actor_type: ai_training
+    ua_patterns:
+      - meta-externalagent
+      - meta-externalagent/
+
+  - bot_id: amazonbot
+    operator: amazon
+    actor_type: ai_training
+    ua_patterns:
+      - Amazonbot
+      - Amazonbot/
+
+  - bot_id: google-extended
+    operator: google
+    actor_type: ai_training
+    ua_patterns:
+      - Google-Extended
+
+  - bot_id: duckassistbot
+    operator: duckduckgo
+    actor_type: ai_search
+    ua_patterns:
+      - DuckAssistBot
+      - DuckAssistBot/
+
+  - bot_id: mistralai-user
+    operator: mistral
+    actor_type: ai_fetcher
+    ua_patterns:
+      - MistralAI-User
+      - MistralAI-User/
+
+  - bot_id: google-notebooklm
+    operator: google
+    actor_type: ai_fetcher
+    ua_patterns:
+      - Google-NotebookLM
+      - Google-NotebookLM/
+
+  - bot_id: oai-adsbot
+    operator: openai
+    actor_type: ai_search
+    ua_patterns:
+      - OAI-AdsBot
+    docs_url: https://openai.com/adsbot
+
+  - bot_id: meta-externalfetcher
+    operator: meta
+    actor_type: ai_fetcher
+    ua_patterns:
+      - meta-externalfetcher
+
+  - bot_id: google-agent
+    operator: google
+    actor_type: ai_fetcher
+    ua_patterns:
+      - Google-Agent
+    docs_url: https://developers.google.com/crawling/docs/crawlers-fetchers/google-agent
+
+  - bot_id: google-cloudvertexbot
+    operator: google
+    actor_type: ai_training
+    ua_patterns:
+      - Google-CloudVertexBot
+
+  - bot_id: claude-code
+    operator: anthropic
+    actor_type: ai_fetcher
+    ua_patterns:
+      - claude-code
+
+  - bot_id: applebot-extended
+    operator: apple
+    actor_type: ai_training
+    ua_patterns:
+      - Applebot-Extended
+
+  - bot_id: petalbot
+    operator: huawei
+    actor_type: ai_search
+    ua_patterns:
+      - PetalBot
+
+  - bot_id: diffbot
+    operator: diffbot
+    actor_type: ai_training
+    ua_patterns:
+      - Diffbot
+
+  # --- search engines (with verification metadata) ---
+
+  - bot_id: googlebot
+    operator: google
+    actor_type: search_engine
+    ua_patterns:
+      - Googlebot
+    ip_source: https://developers.google.com/static/search/apis/ipranges/googlebot.json
+    rdns_suffixes:
+      - .googlebot.com
+      - .google.com
+
+  - bot_id: bingbot
+    operator: microsoft
+    actor_type: search_engine
+    ua_patterns:
+      - bingbot
+    ip_source: https://www.bing.com/toolbox/bingbot.json
+    rdns_suffixes:
+      - .search.msn.com
+
+  - bot_id: applebot
+    operator: apple
+    actor_type: search_engine
+    ua_patterns:
+      - Applebot
+    ip_source: https://search.developer.apple.com/applebot.json
+    rdns_suffixes:
+      - .applebot.apple.com
+
+  - bot_id: yandexbot
+    operator: yandex
+    actor_type: search_engine
+    ua_patterns:
+      - YandexBot
+
+  - bot_id: baiduspider
+    operator: baidu
+    actor_type: search_engine
+    ua_patterns:
+      - Baiduspider
+
+  - bot_id: duckduckbot
+    operator: duckduckgo
+    actor_type: search_engine
+    ua_patterns:
+      - DuckDuckBot
+
+  # --- seo tools ---
+
+  - bot_id: ahrefsbot
+    operator: ahrefs
+    actor_type: seo_tool
+    ua_patterns:
+      - AhrefsBot
+
+  - bot_id: semrushbot
+    operator: semrush
+    actor_type: seo_tool
+    ua_patterns:
+      - SemrushBot
+
+  - bot_id: mj12bot
+    operator: majestic
+    actor_type: seo_tool
+    ua_patterns:
+      - MJ12bot
+
+  - bot_id: dotbot
+    operator: moz
+    actor_type: seo_tool
+    ua_patterns:
+      - DotBot
+
+  - bot_id: screaming-frog-seo-spider
+    operator: screaming-frog
+    actor_type: seo_tool
+    ua_patterns:
+      - Screaming Frog SEO Spider
+
+  - bot_id: dataforseobot
+    operator: dataforseo
+    actor_type: seo_tool
+    ua_patterns:
+      - DataForSeoBot
+
+  # --- social preview fetchers ---
+
+  - bot_id: facebookexternalhit
+    operator: meta
+    actor_type: social
+    ua_patterns:
+      - facebookexternalhit
+
+  - bot_id: twitterbot
+    operator: x
+    actor_type: social
+    ua_patterns:
+      - Twitterbot
+
+  - bot_id: linkedinbot
+    operator: linkedin
+    actor_type: social
+    ua_patterns:
+      - LinkedInBot
+
+  - bot_id: slackbot
+    operator: slack
+    actor_type: social
+    ua_patterns:
+      - Slackbot
+
+  - bot_id: telegrambot
+    operator: telegram
+    actor_type: social
+    ua_patterns:
+      - TelegramBot
+
+  - bot_id: discordbot
+    operator: discord
+    actor_type: social
+    ua_patterns:
+      - Discordbot
+
+  - bot_id: whatsapp
+    operator: meta
+    actor_type: social
+    ua_patterns:
+      - WhatsApp
+
+  - bot_id: pinterestbot
+    operator: pinterest
+    actor_type: social
+    ua_patterns:
+      - Pinterestbot
+
+  # --- monitoring ---
+
+  - bot_id: uptimerobot
+    operator: uptimerobot
+    actor_type: monitoring
+    ua_patterns:
+      - UptimeRobot
+
+  - bot_id: pingdom
+    operator: pingdom
+    actor_type: monitoring
+    ua_patterns:
+      - Pingdom.com_bot
+      - PingdomTMS
+
+  - bot_id: statuscake
+    operator: statuscake
+    actor_type: monitoring
+    ua_patterns:
+      - StatusCake
