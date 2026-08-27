@@ -53,6 +53,22 @@ describe("exploreQuery", () => {
     });
   });
 
+  it("rejects Object.prototype keys — a truthiness lookup would splice a function into the SQL", async () => {
+    const client = fakeClient([]);
+    for (const inherited of ["toString", "constructor", "hasOwnProperty", "__proto__", "valueOf"]) {
+      await expect(
+        exploreQuery(client, { site: "s", hours: 1, metric: inherited, dimension: "bot_id", filters: {} })
+      ).rejects.toThrow(/metric/u);
+      await expect(
+        exploreQuery(client, { site: "s", hours: 1, metric: "hits", dimension: inherited, filters: {} })
+      ).rejects.toThrow(/dimension/u);
+      await expect(
+        exploreQuery(client, { site: "s", hours: 1, metric: "hits", dimension: "bot_id", filters: { [inherited]: "x" } })
+      ).rejects.toThrow(/filter/u);
+    }
+    expect(client.captured).toHaveLength(0);
+  });
+
   it("rejects unknown metric, dimension and filter keys", async () => {
     const client = fakeClient([]);
     await expect(

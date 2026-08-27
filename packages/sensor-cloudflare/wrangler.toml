@@ -1,19 +1,20 @@
 # Crawlytics sensor — deploy per zone:
 #   cd packages/sensor-cloudflare
-#   wrangler deploy
-#   wrangler secret put TRACECONTROL_KEY   (ingest key for the site)
-# Route and TRACECONTROL_URL are set below.
+#   cp wrangler.toml wrangler.local.toml   # then edit the placeholders below
+#   wrangler deploy -c wrangler.local.toml
+#   wrangler secret put TRACECONTROL_KEY   (the ingest key for this site)
 
 name = "crawlytics-sensor"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
 workers_dev = false
 
+# The zone this worker runs in front of.
 routes = [
   { pattern = "example.com/*", zone_name = "example.com" },
   { pattern = "www.example.com/*", zone_name = "example.com" }
 ]
 
 [vars]
-# Public URL of the Crawlytics ingest API (cloudflared tunnel during the pilot)
-TRACECONTROL_URL = "https://dashboard.example.com"
+# Public URL of your Crawlytics instance (the one Caddy serves).
+TRACECONTROL_URL = "https://analytics.example.com"

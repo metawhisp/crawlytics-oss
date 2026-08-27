@@ -1,7 +1,13 @@
 services:
   app:
     restart: unless-stopped
-    image: ghcr.io/metawhisp/crawlytics:${CRAWLYTICS_VERSION:-latest}
+    # Built from this checkout by default: there is no public image to pull, and
+    # a compose file that points at one turns the documented install into a 403.
+    # Set CRAWLYTICS_IMAGE if you publish your own build to a registry.
+    image: ${CRAWLYTICS_IMAGE:-crawlytics-app:local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       # Optional: env-seeded ingest keys. A fresh instance can start empty and

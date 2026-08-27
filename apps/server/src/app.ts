@@ -7,13 +7,20 @@ import Fastify from "fastify";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
+import { loadCompiledBots } from "@crawlytics/registry";
+import type { BotRegistryEntry } from "@crawlytics/registry";
 import { ingestBatchSchema } from "@crawlytics/shared";
 import type { RawLogEvent } from "@crawlytics/shared";
 
+import { DEFAULT_ALERTS_CONFIG } from "./alerts/config.js";
+import { deliverWebhook } from "./alerts/deliver.js";
 import { exploreQuery } from "./explore.js";
 import type { ChQueryClientLike } from "./explore.js";
 import { verifyTrustedLicense } from "./license.js";
+import { MCP_SUPPORTED_PROTOCOL_VERSIONS, handleMcpPayload } from "./mcp/protocol.js";
+import type { McpToolContext } from "./mcp/tools.js";
 import type { MetadataStore } from "./metadata/index.js";
+import { buildLlmsTxt, buildRobotsTxt } from "./robots.js";
 import { toCsv } from "./stats.js";
 import type { StatsStore } from "./stats.js";
 
@@ -51,6 +58,10 @@ export interface AppOptions {
   publicDir?: string;
   /** Readiness probe (e.g. ClickHouse ping); /readyz returns 503 when it resolves false. */
   checkReady?: () => Promise<boolean>;
+  /** Bot registry for the robots.txt/llms.txt generator. Defaults to the compiled registry. */
+  bots?: BotRegistryEntry[];
+  /** Per-read-key request cap for POST /mcp, per minute. Default 120. */
+  mcpRateLimitPerMinute?: number;
   logger?: boolean;
 }
 
@@ -66,7 +77,9 @@ const pagesQuerySchema = windowQuerySchema.extend({
 });
 
 const exportQuerySchema = windowQuerySchema.extend({
-  table: z.enum(["bots", "pages", "security"])
+  table: z.enum(["bots", "pages", "security", "citations", "funnels"]),
+  /** Day-windowed tables (citations/funnels) use this; hour-windowed ones ignore it. */
+  days: z.coerce.number().int().min(1).max(365).default(30)
 });
 
 export function buildApp(options: AppOptions): FastifyInstance {
@@ -239,15 +252,20 @@ export function buildApp(options: AppOptions): FastifyInstance {
     return false;
   }
 
+  // Shared by the robots.txt generator route and the MCP tools; loaded lazily so
+  // a headless/ingest-only server never pays for the registry.
+  let registryBots: BotRegistryEntry[] | null = options.bots ?? null;
+  const botRegistry = (): BotRegistryEntry[] => (registryBots ??= loadCompiledBots());
+
   if (serveDashboard) {
-    // The data API (/api/v1) and login are locked until a valid license is
+    // The data API (/api/v1), login and MCP are locked until a valid license is
     // present; re-checked per request so POST /api/license unlocks them live.
     // The shell (session status + license entry) stays reachable while locked.
     app.addHook("onRequest", (request, reply, done) => {
       const routeUrl = request.routeOptions.url ?? "";
       // Exact "/api/v1" or a "/api/v1/" child — NOT a sibling like "/api/v1x".
       const isData = routeUrl === "/api/v1" || routeUrl.startsWith("/api/v1/");
-      if ((isData || routeUrl === "/api/login") && !dashboardEnabled) {
+      if ((isData || routeUrl === "/api/login" || routeUrl === "/mcp") && !dashboardEnabled) {
         void reply.code(403).send({ error: "dashboard locked: a valid license key is required" });
         return;
       }
@@ -433,10 +451,249 @@ export function buildApp(options: AppOptions): FastifyInstance {
       const seen = siteIngest.get(id);
       return reply.send({ lastEventAt: seen?.at ?? null, recentEvents: seen?.count ?? 0 });
     });
+
+    // Suggested robots.txt / llms.txt from the bot registry. Garbage policy
+    // values fall back to the safe defaults (deny training, allow search/fetch)
+    // instead of erroring — this is a generator, not a validator.
+    const policySchema = z.object({
+      site: z.string().min(1).max(200),
+      train: z.enum(["allow", "deny"]).catch("deny"),
+      search: z.enum(["allow", "deny"]).catch("allow"),
+      fetch: z.enum(["allow", "deny"]).catch("allow")
+    });
+    app.get("/api/v1/robots-suggestion", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const parsed = policySchema.safeParse(request.query);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid query" });
+      }
+      const site = await options.metadata.getSite(parsed.data.site);
+      if (site === null) {
+        return reply.code(404).send({ error: "unknown site" });
+      }
+      return reply.send({
+        robotsTxt: buildRobotsTxt(botRegistry(), {
+          training: parsed.data.train,
+          search: parsed.data.search,
+          fetch: parsed.data.fetch
+        }),
+        llmsTxt: buildLlmsTxt(site.domain)
+      });
+    });
+
+    // Alerts config. Default OFF: webhookUrl is empty until the owner saves one —
+    // the server never posts anywhere out of the box. The owner-supplied URL is
+    // the only destination alerts ever go to (self-host: the owner owns both ends).
+    // Deliberate tradeoff: private/localhost targets are ALLOWED — self-hosters
+    // legitimately point webhooks at services on their own network, and the URL
+    // is settable only by the authed dashboard owner.
+    const alertsConfigSchema = z.object({
+      webhookUrl: z
+        .string()
+        .max(2048)
+        .refine((value) => value === "" || /^https?:\/\//i.test(value), "must be an http(s) URL or empty")
+        .default(""),
+      rules: z
+        .object({
+          spike: z.boolean().default(true),
+          newBot: z.boolean().default(true),
+          spoof: z.boolean().default(true),
+          brokenCitation: z.boolean().default(true)
+        })
+        .default({}),
+      spikeFactor: z.number().int().min(1).max(100).default(DEFAULT_ALERTS_CONFIG.spikeFactor),
+      cooldownMinutes: z.number().int().min(5).max(10080).default(DEFAULT_ALERTS_CONFIG.cooldownMinutes)
+    });
+
+    app.get("/api/v1/alerts", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const config = await options.metadata.getAlertsConfig();
+      return reply.send(config ?? DEFAULT_ALERTS_CONFIG);
+    });
+
+    app.put("/api/v1/alerts", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const parsed = alertsConfigSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid config", issues: parsed.error.issues.slice(0, 5) });
+      }
+      // URL sanity beyond the protocol check — reject unparseable values early
+      if (parsed.data.webhookUrl !== "") {
+        try {
+          new URL(parsed.data.webhookUrl);
+        } catch {
+          return reply.code(400).send({ error: "invalid webhook url" });
+        }
+      }
+      await options.metadata.setAlertsConfig(parsed.data);
+      return reply.send(parsed.data);
+    });
+
+    app.post("/api/v1/alerts/test", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const config = await options.metadata.getAlertsConfig();
+      if (config === null || config.webhookUrl === "") {
+        return reply.code(400).send({ error: "no webhook url configured" });
+      }
+      const ok = await deliverWebhook(config.webhookUrl, {
+        text: "Crawlytics test alert — your webhook works.",
+        rule: "test",
+        site: "-",
+        subject: "test"
+      });
+      return reply.send({ ok });
+    });
   }
 
   if (serveDashboard && options.stats) {
     const stats = options.stats;
+
+    // ---- MCP (Model Context Protocol) --------------------------------------
+    // Lets the site owner point Claude at their own analytics. Auth is a
+    // read-scoped key (cwr_…); the key alone decides which site is visible, so a
+    // key can never read another tenant. Read-only by design: alert/webhook
+    // config stays dashboard-only, so a leaked key cannot redirect alerts.
+    const MCP_RATE_WINDOW_MS = 60_000;
+    const MCP_MAX_TRACKED = 10_000;
+    const mcpRateLimit = options.mcpRateLimitPerMinute ?? 120;
+    // Per authenticated key, and a wider per-IP bucket in FRONT of the key
+    // lookup — otherwise a flood of random keys never gets counted at all and
+    // hammers the metadata store for free.
+    const mcpKeyHits = new Map<string, { count: number; first: number }>();
+    const mcpIpHits = new Map<string, { count: number; first: number }>();
+    const MCP_IP_RATE_LIMIT = mcpRateLimit * 4;
+
+    // Returns seconds to wait when the bucket is over budget, else 0 (and counts
+    // the request). Same bounded-map discipline as the login limiter.
+    function throttleSeconds(
+      buckets: Map<string, { count: number; first: number }>,
+      bucket: string,
+      limit: number,
+      now: number
+    ): number {
+      const entry = buckets.get(bucket);
+      if (!entry || now - entry.first >= MCP_RATE_WINDOW_MS) {
+        buckets.set(bucket, { count: 1, first: now });
+      } else if (entry.count >= limit) {
+        return Math.max(1, Math.ceil((entry.first + MCP_RATE_WINDOW_MS - now) / 1000));
+      } else {
+        entry.count += 1;
+      }
+      if (buckets.size > MCP_MAX_TRACKED) {
+        for (const [tracked, value] of buckets) {
+          if (now - value.first >= MCP_RATE_WINDOW_MS) {
+            buckets.delete(tracked);
+          }
+        }
+        for (const tracked of buckets.keys()) {
+          if (buckets.size <= MCP_MAX_TRACKED) {
+            break;
+          }
+          buckets.delete(tracked);
+        }
+      }
+      return 0;
+    }
+
+    // MCP messages are small; the 10 MB global body limit exists for ingest
+    // batches and has no business here.
+    const MCP_BODY_LIMIT = 256 * 1024;
+
+    // Browsers attach Origin; CLI/agent clients do not. A DNS-rebinding attack
+    // arrives with our Host but a foreign Origin, so same-host is the test the
+    // Streamable HTTP spec asks for. No Origin => not a browser => allowed.
+    function mcpOriginAllowed(request: FastifyRequest): boolean {
+      const origin = request.headers.origin;
+      if (typeof origin !== "string" || origin === "") {
+        return true;
+      }
+      try {
+        return new URL(origin).host === request.headers.host;
+      } catch {
+        return false;
+      }
+    }
+
+    app.route({
+      method: "POST",
+      url: "/mcp",
+      bodyLimit: MCP_BODY_LIMIT,
+      // onRequest runs BEFORE body parsing: an unauthenticated flood is counted
+      // and cut off without spending the parser, and header-only checks answer
+      // early. (Global hooks — the license gate — still run before this.)
+      onRequest: (request, reply, done) => {
+        const ipRetry = throttleSeconds(mcpIpHits, clientIp(request), MCP_IP_RATE_LIMIT, Date.now());
+        if (ipRetry > 0) {
+          void reply.code(429).header("retry-after", String(ipRetry)).send({ error: "rate limit exceeded" });
+          return;
+        }
+        if (!mcpOriginAllowed(request)) {
+          void reply.code(403).send({ error: "cross-origin requests are not allowed" });
+          return;
+        }
+        // Post-initialize requests carry the negotiated version; refuse one we
+        // did not agree to rather than answering in a shape the client cannot read.
+        const declared = request.headers["mcp-protocol-version"];
+        if (typeof declared === "string" && !MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(declared)) {
+          void reply.code(400).send({
+            error: `unsupported MCP-Protocol-Version: ${declared}`,
+            supported: MCP_SUPPORTED_PROTOCOL_VERSIONS
+          });
+          return;
+        }
+        done();
+      },
+      handler: async (request, reply) => {
+      const header = request.headers.authorization ?? "";
+      const key = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+      // Read scope only: an ingest key (write-only, often pasted into a CDN
+      // worker) must never be able to read analytics back out.
+      const siteId = key === "" ? null : await options.metadata.resolveReadKey(key);
+      if (siteId === null) {
+        return reply
+          .code(401)
+          .header("WWW-Authenticate", 'Bearer realm="crawlytics", error="invalid_token"')
+          .send({ error: "a Crawlytics read key (cwr_...) is required" });
+      }
+      const keyRetry = throttleSeconds(mcpKeyHits, key, mcpRateLimit, Date.now());
+      if (keyRetry > 0) {
+        return reply.code(429).header("retry-after", String(keyRetry)).send({ error: "rate limit exceeded" });
+      }
+      const ctx: McpToolContext = {
+        siteId,
+        stats,
+        metadata: options.metadata,
+        bots: botRegistry(),
+        onError: (error, toolName) => {
+          request.log.error({ err: error, tool: toolName, siteId }, "mcp tool failed");
+        },
+        ...(options.chClient ? { chClient: options.chClient } : {})
+      };
+      const outcome = await handleMcpPayload(request.body, ctx);
+        return outcome.body === undefined
+          ? reply.code(outcome.status).send()
+          : reply.code(outcome.status).send(outcome.body);
+      }
+    });
+
+    // No server-initiated stream and no sessions to terminate, so the optional
+    // GET/DELETE halves of Streamable HTTP are declined rather than faked.
+    for (const method of ["GET", "DELETE"] as const) {
+      app.route({
+        method,
+        url: "/mcp",
+        handler: (_request, reply) =>
+          reply.code(405).header("allow", "POST").send({ error: "MCP over this endpoint is POST-only" })
+      });
+    }
 
     function windowParams(request: FastifyRequest, reply: FastifyReply): { site: string; hours: number } | null {
       const parsed = windowQuerySchema.safeParse(request.query);
@@ -537,7 +794,57 @@ export function buildApp(options: AppOptions): FastifyInstance {
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid query" });
       }
-      return reply.send({ pages: await stats.referralFunnels(parsed.data.site, parsed.data.days, parsed.data.limit) });
+      return reply.send({ pages: await stats.aiLandingPages(parsed.data.site, parsed.data.days, parsed.data.limit) });
+    });
+
+    app.get("/api/v1/citations", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const parsed = z
+        .object({
+          site: z.string().min(1).max(200),
+          days: z.coerce.number().int().min(1).max(365).default(30),
+          limit: z.coerce.number().int().min(1).max(100).default(50)
+        })
+        .safeParse(request.query);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid query" });
+      }
+      return reply.send(await stats.citations(parsed.data.site, parsed.data.days, parsed.data.limit));
+    });
+
+    app.get("/api/v1/crawl-health", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const parsed = z
+        .object({
+          site: z.string().min(1).max(200),
+          days: z.coerce.number().int().min(1).max(365).default(30),
+          limit: z.coerce.number().int().min(1).max(100).default(50)
+        })
+        .safeParse(request.query);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid query" });
+      }
+      return reply.send(await stats.crawlHealth(parsed.data.site, parsed.data.days, parsed.data.limit));
+    });
+
+    app.get("/api/v1/crawl-to-refer", async (request, reply) => {
+      if (!requireAuth(request, reply)) {
+        return reply;
+      }
+      const parsed = z
+        .object({
+          site: z.string().min(1).max(200),
+          days: z.coerce.number().int().min(1).max(365).default(30)
+        })
+        .safeParse(request.query);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid query" });
+      }
+      return reply.send(await stats.crawlToRefer(parsed.data.site, parsed.data.days));
     });
 
     const chClient = options.chClient;
@@ -584,12 +891,16 @@ export function buildApp(options: AppOptions): FastifyInstance {
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid query" });
       }
-      const { site, hours, table } = parsed.data;
+      const { site, hours, table, days } = parsed.data;
       let rows: Array<Record<string, unknown>> = [];
       if (table === "bots") {
         rows = (await stats.bots(site, hours)) as unknown as Array<Record<string, unknown>>;
       } else if (table === "pages") {
         rows = (await stats.pages(site, hours, "")) as unknown as Array<Record<string, unknown>>;
+      } else if (table === "citations") {
+        rows = (await stats.citations(site, days, 50)).pages as unknown as Array<Record<string, unknown>>;
+      } else if (table === "funnels") {
+        rows = (await stats.aiLandingPages(site, days, 50)) as unknown as Array<Record<string, unknown>>;
       } else {
         rows = (await stats.security(site, hours)).spoofedSources;
       }

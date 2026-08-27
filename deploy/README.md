@@ -19,22 +19,28 @@ key on the unlock screen, then add a site under **Setup**.
 Requirements: ports **80** and **443** reachable from the internet (Caddy/ACME),
 the domain resolving to this server, and Docker running.
 
-## Two images
+## Two builds
 
-- **Full** (`ghcr.io/metawhisp/crawlytics:latest`) — engine + ingest + API + CLI
-  **and the dashboard**. This is what `install.sh` / `compose.prod.yml` use; the
-  dashboard unlocks with a license key.
-- **Headless** (`ghcr.io/metawhisp/crawlytics:latest-headless`) — the free,
-  open-core image: same engine + ingest + API + CLI, **no dashboard**. Point
-  `CRAWLYTICS_VERSION` at a `-headless` tag (or set the image) to run it.
+Both are produced from `deploy/Dockerfile` in this checkout; there is no image to
+pull. `install.sh` and `compose.prod.yml` build the first one and tag it
+`crawlytics-app:local`.
 
-Neither image contains the Stripe issuer (payment + license signing) — that runs
-only on our side (`deploy/issuer.Dockerfile`).
+- **With dashboard** (default, `--build-arg INCLUDE_DASHBOARD=1`) — engine,
+  ingest, query API, CLI and the React dashboard. Self-hosted installs are not
+  license-gated; the dashboard is served as soon as `TC_DASHBOARD_PASSWORD` is
+  set, and refuses to start unprotected in production.
+- **Headless** (`--build-arg INCLUDE_DASHBOARD=0`) — the same engine, ingest,
+  API and CLI with the SPA left out. Useful when you query through the API or
+  MCP and do not want a login surface at all.
+
+```bash
+docker build -f deploy/Dockerfile --build-arg INCLUDE_DASHBOARD=0 -t crawlytics-app:headless ..
+```
 
 ## Day-2 operations
 
 ```bash
-./install.sh --upgrade     # pull the latest images and restart (keeps all data)
+./install.sh --upgrade     # rebuild from this checkout and restart (keeps all data)
 ./install.sh --uninstall   # stop the stack, keep data volumes
 ./install.sh --purge       # stop AND delete all data volumes (irreversible)
 ```

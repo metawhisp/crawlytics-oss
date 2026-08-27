@@ -1,3 +1,4 @@
+import type { AlertsConfig, AlertsState } from "../alerts/config.js";
 import type { ApiKey, CreateKeyInput, CreateSiteInput, MetadataStore, Site } from "./store.js";
 import { generateApiKey } from "./store.js";
 
@@ -11,6 +12,8 @@ export function createMemoryStore(): MetadataStore {
   const sites = new Map<string, Site>();
   const keys = new Map<string, ApiKey>();
   let licenseKey: string | null = null;
+  let alertsConfig: AlertsConfig | null = null;
+  let alertsState: AlertsState = {};
 
   return {
     resolveIngestKey(key: string): Promise<string | null> {
@@ -65,6 +68,20 @@ export function createMemoryStore(): MetadataStore {
     },
     setLicenseKey(key: string | null): Promise<void> {
       licenseKey = key;
+      return Promise.resolve();
+    },
+    getAlertsConfig(): Promise<AlertsConfig | null> {
+      return Promise.resolve(alertsConfig);
+    },
+    setAlertsConfig(config: AlertsConfig): Promise<void> {
+      alertsConfig = config;
+      return Promise.resolve();
+    },
+    getAlertsState(): Promise<AlertsState> {
+      return Promise.resolve({ ...alertsState });
+    },
+    setAlertsState(state: AlertsState): Promise<void> {
+      alertsState = { ...state };
       return Promise.resolve();
     }
   };

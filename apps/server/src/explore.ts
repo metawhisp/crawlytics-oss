@@ -61,23 +61,25 @@ export async function exploreQuery(
   client: ChQueryClientLike,
   request: ExploreRequest
 ): Promise<ExploreRow[]> {
-  const metricSql = EXPLORE_METRICS[request.metric];
-  if (!metricSql) {
+  // Object.hasOwn, not a truthiness check: `metric = "toString"` would otherwise
+  // resolve through Object.prototype and splice a function body into the SQL.
+  if (!Object.hasOwn(EXPLORE_METRICS, request.metric)) {
     throw new Error(`unknown metric: ${request.metric}`);
   }
-  const dimensionSql = EXPLORE_DIMENSIONS[request.dimension];
-  if (!dimensionSql) {
+  const metricSql = EXPLORE_METRICS[request.metric] as string;
+  if (!Object.hasOwn(EXPLORE_DIMENSIONS, request.dimension)) {
     throw new Error(`unknown dimension: ${request.dimension}`);
   }
+  const dimensionSql = EXPLORE_DIMENSIONS[request.dimension] as string;
 
   const params: Record<string, unknown> = { site: request.site, hours: request.hours };
   const conditions = ["site_id = {site:String}", "ts > now() - INTERVAL {hours:UInt32} HOUR"];
 
   for (const [key, value] of Object.entries(request.filters)) {
-    const column = EXPLORE_FILTERS[key];
-    if (!column) {
+    if (!Object.hasOwn(EXPLORE_FILTERS, key)) {
       throw new Error(`unknown filter: ${key}`);
     }
+    const column = EXPLORE_FILTERS[key] as string;
     if (value === "") {
       continue;
     }

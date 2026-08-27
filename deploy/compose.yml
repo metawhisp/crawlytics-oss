@@ -14,8 +14,13 @@ services:
       CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-tracecontrol}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-tracecontrol}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-tracecontrol}
+    # Loopback by default. This file is the quick start, and on a VPS a
+    # 0.0.0.0 bind would publish the dashboard AND the ingest API to the whole
+    # internet behind nothing but a password. Put a reverse proxy in front
+    # (deploy/install.sh does it with Caddy) rather than widening this; set
+    # APP_BIND=0.0.0.0 only if you know what is listening in front of it.
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
     volumes:
       - crawlytics_data:/data
     healthcheck:

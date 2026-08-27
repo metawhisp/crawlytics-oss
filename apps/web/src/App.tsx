@@ -12,9 +12,12 @@ import {
   logout,
   submitLicense
 } from "./api.js";
+import { listSites } from "./api.js";
 import type { BotDetail, BotRow, Overview, PageRow, Security } from "./api.js";
 import { Chart } from "./Chart.js";
-import { Funnels } from "./Funnels.js";
+import { Citations } from "./Citations.js";
+import { CrawlHealth } from "./CrawlHealth.js";
+import { AiLandingPages } from "./AiLandingPages.js";
 import { Login } from "./Login.js";
 import { PagesTrends } from "./PagesTrends.js";
 import { Explore } from "./Explore.js";
@@ -27,7 +30,7 @@ const PERIODS = [
   { hours: 720, label: "30d" }
 ];
 
-const TABS = ["Overview", "Explore", "Bots", "Pages", "Referrals", "Security", "Setup"] as const;
+const TABS = ["Overview", "Explore", "Bots", "Pages", "Citations", "Referrals", "Security", "Setup"] as const;
 type Tab = (typeof TABS)[number];
 
 function actorBadge(actorType: string): { cls: string; label: string } {
@@ -43,7 +46,11 @@ function actorBadge(actorType: string): { cls: string; label: string } {
     case "seo_tool":
       return { cls: "b-other", label: "SEO" };
     case "human":
-      return { cls: "b-referral", label: "human" };
+      // NOT "a person": the classifier files every unrecognised user-agent here
+      // (matcher.ts:132). On a real site most of it is automation wearing a
+      // browser string. Rows that also carry an ai_referral show that separately,
+      // and THAT is evidence of a human.
+      return { cls: "b-other", label: "не опознан" };
     default:
       return { cls: "b-other", label: actorType.replace("_", " ") };
   }
@@ -55,6 +62,7 @@ const NAV_ICONS: Record<string, string> = {
   Explore: "M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.35-4.35",
   Bots: "M12 3v3M8 9h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM9 13h.01M15 13h.01",
   Pages: "M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM14 3v6h6",
+  Citations: "M7 7h10M7 11h6M4 4h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-8l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z",
   Referrals: "M3 4h18M6 4l5 7v7l2-1v-6l5-7",
   Security: "M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6l8-3z",
   Setup: "M12 9v6M9 12h6M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"
@@ -134,20 +142,32 @@ export function App() {
     if (authed !== true) {
       return;
     }
-    getOverview(site || "acme", hours)
+    // Nothing selected yet: ask which sites exist rather than guessing a name.
+    // The overview endpoint requires a non-empty site, so there is no id we
+    // could send here that would not be a guess about someone else's install.
+    if (!site) {
+      listSites()
+        .then((result) => {
+          setError(null);
+          const first = result.sites[0]?.id;
+          if (first !== undefined) {
+            setSite(first);
+            return;
+          }
+          // First run, nothing ingested yet → send the operator to the wizard.
+          if (!autoRouted.current) {
+            autoRouted.current = true;
+            setTab("Setup");
+          }
+        })
+        .catch((cause: unknown) => setError(String(cause)));
+      return;
+    }
+
+    getOverview(site, hours)
       .then((overview) => {
         setData(overview);
         setError(null);
-        if (!site && overview.sites.length > 0) {
-          setSite(overview.sites[0] ?? "");
-        }
-        // First run with no data yet → send the operator to the setup wizard.
-        if (!autoRouted.current) {
-          autoRouted.current = true;
-          if (overview.sites.length === 0) {
-            setTab("Setup");
-          }
-        }
       })
       .catch((cause: unknown) => setError(String(cause)));
   }, [authed, site, hours]);
@@ -236,7 +256,7 @@ export function App() {
     );
   }
 
-  const effectiveSite = site || "acme";
+  const effectiveSite = site;
 
   return (
     <div className="shell">
@@ -252,7 +272,7 @@ export function App() {
         </nav>
         <div className="side-foot">
           <select value={site} onChange={(event) => setSite(event.target.value)} aria-label="Site">
-            {(data?.sites ?? [effectiveSite]).map((name) => (
+            {(data?.sites ?? (effectiveSite ? [effectiveSite] : [])).map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
@@ -285,7 +305,8 @@ export function App() {
       {tab === "Explore" ? <Explore site={effectiveSite} hours={hours} /> : null}
       {tab === "Bots" ? <BotsTab site={effectiveSite} hours={hours} /> : null}
       {tab === "Pages" ? <PagesTab site={effectiveSite} hours={hours} /> : null}
-        {tab === "Referrals" ? <Funnels site={effectiveSite} /> : null}
+        {tab === "Citations" ? <Citations site={effectiveSite} /> : null}
+        {tab === "Referrals" ? <AiLandingPages site={effectiveSite} /> : null}
         {tab === "Security" ? <SecurityTab site={effectiveSite} hours={hours} /> : null}
         {tab === "Setup" ? <Onboarding /> : null}
       </main>
@@ -540,6 +561,7 @@ function PagesTab({ site, hours }: { site: string; hours: number }) {
   return (
     <>
       <PagesTrends site={site} />
+      <CrawlHealth site={site} />
       <div className="card">
       <div className="cardhead">
         <h3>Pages by AI attention</h3>
@@ -602,13 +624,20 @@ function SecurityTab({ site, hours }: { site: string; hours: number }) {
         <h3>Spoofing sources</h3>
         {security && security.spoofedSources.length > 0 ? (
           <table>
-            <thead><tr><th>IP</th><th>Geo / Network</th><th>Pretends to be</th><th className="num">Hits</th><th className="num">Last seen</th></tr></thead>
+            <thead><tr><th>IP</th><th>Geo / Network</th><th title="Последняя использованная личина; +N = IP менял их">Pretends to be</th><th className="num">Hits</th><th className="num">Last seen</th></tr></thead>
             <tbody>
               {security.spoofedSources.map((source) => (
                 <tr key={source.ip}>
                   <td className="path">{source.ip}</td>
                   <td className="muted">{[source.country, source.asOrg].filter(Boolean).join(" · ") || "—"}</td>
-                  <td><span className="badge b-spoofed">{source.claimedBot}</span></td>
+                  <td>
+                    <span className="badge b-spoofed">{source.claimedBot}</span>
+                    {source.claimedVariants > 1 ? (
+                      <span className="muted" title="Этот IP менял личины — показана последняя">
+                        {" "}+{source.claimedVariants - 1} UA
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="num">{fmtNum(source.hits)}</td>
                   <td className="num muted">{timeAgo(source.lastSeen)}</td>
                 </tr>

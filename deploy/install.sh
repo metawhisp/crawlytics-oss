@@ -5,7 +5,7 @@
 # regenerates secrets or deletes data volumes (only --purge does).
 #
 #   ./install.sh            install or upgrade on the domain in .env (prompts first run)
-#   ./install.sh --upgrade  pull latest images and restart (keeps data)
+#   ./install.sh --upgrade  rebuild from this checkout and restart (keeps data)
 #   ./install.sh --uninstall stop the stack, keep data volumes
 #   ./install.sh --purge    stop the stack AND delete all data volumes (destructive)
 #
@@ -135,8 +135,10 @@ DOMAIN="$(get_env CRAWLYTICS_DOMAIN)"
 preflight_ports
 preflight_dns "${DOMAIN}"
 
-log "Pulling images…"
-compose pull --quiet app caddy clickhouse 2>/dev/null || compose pull
+log "Fetching base images…"
+compose pull --quiet caddy clickhouse 2>/dev/null || true
+log "Building the app image (first run takes a few minutes)…"
+compose build app
 log "Starting the stack…"
 compose up -d
 

@@ -14,18 +14,23 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"test-integration/**/*.ts\"",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "preview": "./test-integration/preview.sh",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "@clickhouse/client": "^1.10.1",
-    "@fastify/cookie": "^11.0.2",
-    "@fastify/static": "^8.1.1",
     "@crawlytics/detector": "workspace:*",
     "@crawlytics/registry": "workspace:*",
     "@crawlytics/shared": "workspace:*",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/static": "^8.1.1",
     "fastify": "^5.3.2",
     "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
   }
 }

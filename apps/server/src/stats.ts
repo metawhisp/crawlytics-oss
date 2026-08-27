@@ -71,7 +71,17 @@ export interface BotDetailResult {
 
 export interface SecurityResult {
   spoofedByBot: Array<{ botId: string; hits: number; ips: number }>;
-  spoofedSources: Array<{ ip: string; country: string; asOrg: string; claimedBot: string; hits: number; lastSeen: string }>;
+  /** `claimedBot` is the identity used MOST RECENTLY by that IP; `claimedVariants`
+   * is how many different identities it wore in the window (1 = a single mask). */
+  spoofedSources: Array<{
+    ip: string;
+    country: string;
+    asOrg: string;
+    claimedBot: string;
+    claimedVariants: number;
+    hits: number;
+    lastSeen: string;
+  }>;
 }
 
 /** Daily hits per page for the top-N pages, aligned to a shared date axis. */
@@ -84,15 +94,75 @@ export interface PagesDailyResult {
   series: Array<{ page: string; hits: number[] }>;
 }
 
-/** One landing page with its AI-engagement funnel: crawled -> surfaced -> clicked. */
-export interface ReferralFunnelRow {
+/**
+ * One landing page that an AI assistant sent people to, split by which class of
+ * bot visited it.
+ *
+ * These are INDEPENDENT CHANNELS, not funnel stages. actor_type labels the bot
+ * that made a request; a page can be fetched live without ever being crawled for
+ * training, and a human can click through to a page no bot touched at all. Any
+ * UI that stacks them as crawled -> surfaced -> clicked is claiming a nesting
+ * the data cannot have.
+ */
+export interface AiLandingPageRow {
   page: string;
-  /** AI read the page (ai_training + ai_fetcher hits). */
-  crawled: number;
-  /** AI search engines hit the page (ai_search). */
-  surfaced: number;
-  /** Humans landed on the page via an AI referral (the actual click-throughs). */
+  /** ai_training hits — bots collecting text to train on. */
+  training: number;
+  /** ai_search hits — answer-engine indexers. */
+  search: number;
+  /** ai_fetcher hits — live retrieval while answering someone. */
+  fetch: number;
+  /** Humans who landed here via an AI referral (the actual click-throughs). */
   clicked: number;
+}
+
+/** A page AI actually cites — measured from real traffic, not sampled prompts. */
+export interface CitedPageRow {
+  page: string;
+  /** Live on-demand fetches by assistants answering a user right now (ai_fetcher). */
+  fetched: number;
+  /** Hits by AI search indexers that surface pages in answers (ai_search). */
+  surfaced: number;
+  /** Humans who landed here from an AI assistant (ai_referral != ''). */
+  clicked: number;
+  lastCited: string;
+}
+
+export interface CitationsResult {
+  pages: CitedPageRow[];
+  /** Human click-throughs per assistant (ai_referral). */
+  bySource: Array<{ source: string; clicks: number }>;
+  /** AI crawl volume per vendor (operator). */
+  byOperator: Array<{ operator: string; crawls: number }>;
+  /** Latest retrieval-bot hits (ai_fetcher/ai_search) — the live citation feed. */
+  feed: Array<{ ts: string; botId: string; operator: string; actorType: string; path: string; country: string }>;
+  /** AI hits on paths excluded from `pages` — robots.txt, sitemaps, assets.
+   * Real traffic, just not citations; surfaced so the number doesn't vanish. */
+  infra: Array<{ page: string; hits: number }>;
+}
+
+/** Actionable crawl problems, straight from logs. */
+export interface CrawlHealthResult {
+  /** Pages where NON-SPOOFED AI bots hit >=400 — a citation link pointing at a
+   * broken page. `everOk` distinguishes a page that died (true) from a URL that
+   * never existed (false). */
+  broken: Array<{ page: string; aiErrors: number; sampleStatus: number; lastHit: string; everOk: boolean }>;
+  /** Pages humans visit but NO AI bot has crawled in the window — invisible to AI.
+   * Scanner sessions are excluded; `readers` is the number of distinct sessions. */
+  blindSpots: Array<{ page: string; humanHits: number; readers: number }>;
+}
+
+/** How much a vendor takes (crawls) vs gives back (human clicks from its assistant). */
+export interface CrawlToReferRow {
+  /** Crawl-side operator name, or the referral source when no crawler was seen. */
+  vendor: string;
+  crawls: number;
+  clicks: number;
+  /** clicks / crawls; null when crawls = 0 (can't divide — pure "sender"). */
+  ratio: number | null;
+  /** False when the vendor has no consumer assistant that could ever send clicks
+   * (bytedance, amazon, ...) — "0 clicks" is expected there, not an insult. */
+  hasAssistant: boolean;
 }
 
 export interface StatsStore {
@@ -103,13 +173,38 @@ export interface StatsStore {
   security(site: string, hours: number): Promise<SecurityResult>;
   /** Daily per-page hits for charting; returns the top `limit` pages by total. */
   pagesDaily(site: string, days: number, limit?: number): Promise<PagesDailyResult>;
-  /** Landing pages that got AI referral click-throughs, with the crawled->surfaced->clicked funnel. */
-  referralFunnels(site: string, days: number, limit?: number): Promise<ReferralFunnelRow[]>;
+  /** Landing pages that got AI referral click-throughs, split by bot class. */
+  aiLandingPages(site: string, days: number, limit?: number): Promise<AiLandingPageRow[]>;
+  /** Pages AI cites (live fetches, answer-index hits, human click-throughs) + live feed. */
+  citations(site: string, days: number, limit?: number): Promise<CitationsResult>;
+  /** Broken-citation pages (AI hit >=400) and AI blind spots (human-only pages). */
+  crawlHealth(site: string, days: number, limit?: number): Promise<CrawlHealthResult>;
+  /** Take-vs-give per AI vendor: crawl volume vs human clicks its assistant sends back. */
+  crawlToRefer(site: string, days: number): Promise<{ rows: CrawlToReferRow[] }>;
 }
 
 const WINDOW = "site_id = {site:String} AND ts > now() - INTERVAL {hours:UInt32} HOUR";
 const PREV_WINDOW =
   "site_id = {site:String} AND ts > now() - INTERVAL {hours2:UInt32} HOUR AND ts <= now() - INTERVAL {hours:UInt32} HOUR";
+
+// Paths that are never "a page": static assets and infrastructure files. This
+// lived inline in the blind-spots query only, so the citations panel shipped
+// without it and ranked /robots.txt above every article on the site. One
+// definition, every panel that talks about content.
+const ASSET_EXTENSIONS =
+  "css|js|mjs|map|json|xml|txt|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|mp3|mp4|webm|pdf|zip|gz";
+const CONTENT_PATH_FILTER = `NOT match(path_group, '(?i)\\\\.(${ASSET_EXTENSIONS})$')
+    AND NOT startsWith(path_group, '/.well-known/')`;
+
+// Deliberately NARROWER than ASSET_EXTENSIONS: these are the files a browser
+// pulls automatically to render a page. .json/.xml/.txt/.pdf are left out — a
+// scanner requests those on purpose, a renderer does not.
+const RENDER_ASSET_MATCH = `match(path_group, '(?i)\\\\.(css|js|mjs|png|jpe?g|gif|webp|avif|svg|woff2?)$')`;
+
+// A forged user-agent is not an AI assistant reading you. Anything that claims
+// to measure AI attention has to drop spoofed traffic, or a scanner wearing a
+// ChatGPT UA shows up as a citation.
+const NOT_SPOOFED = "verification != 'spoofed'";
 
 const KPI_SELECT = `
   countIf(actor_type LIKE 'ai_%') AS ai_hits,
@@ -155,20 +250,241 @@ const PAGES_DAILY_QUERY = `
   GROUP BY date, page
   ORDER BY page, date`;
 
-// Landing pages that received AI referral click-throughs, each with its
-// crawled -> surfaced -> clicked funnel. Queried from raw events because the
-// "clicked" stage needs ai_referral (the rollup only keeps actor_type).
-const REFERRAL_FUNNELS_QUERY = `
+// Landing pages that received AI referral click-throughs, each split by the bot
+// class that visited. Queried from raw events because "clicked" needs
+// ai_referral (the rollup only keeps actor_type).
+//
+// The three bot columns are disjoint by construction — actor_type is a single
+// label per request — so they sum to the page's AI hits and must never be drawn
+// as stages of one another.
+const AI_LANDING_PAGES_QUERY = `
   SELECT path_group AS page,
-         countIf(actor_type IN ('ai_training', 'ai_fetcher')) AS crawled,
-         countIf(actor_type = 'ai_search') AS surfaced,
+         countIf(actor_type = 'ai_training') AS training_hits,
+         countIf(actor_type = 'ai_search') AS search_hits,
+         countIf(actor_type = 'ai_fetcher') AS fetch_hits,
          countIf(actor_type = 'human' AND ai_referral != '') AS clicked
   FROM events
   WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND ${NOT_SPOOFED}
   GROUP BY path_group
   HAVING clicked > 0
-  ORDER BY clicked DESC, crawled DESC
+  ORDER BY clicked DESC, training_hits + search_hits + fetch_hits DESC
   LIMIT {limit:UInt32}`;
+
+// Pages AI cites, from raw events (needs ai_referral alongside path_group, which
+// the rollups don't keep). fetched = live per-prompt retrieval (the strongest
+// "cited right now" signal), surfaced = answer-index crawls, clicked = humans
+// arriving from an assistant.
+const CITED_PAGES_QUERY = `
+  SELECT path_group AS page,
+         countIf(actor_type = 'ai_fetcher') AS fetched,
+         countIf(actor_type = 'ai_search') AS surfaced,
+         countIf(actor_type = 'human' AND ai_referral != '') AS clicked,
+         max(ts) AS last_cited
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND (actor_type IN ('ai_fetcher', 'ai_search') OR (actor_type = 'human' AND ai_referral != ''))
+    AND ${NOT_SPOOFED}
+    AND ${CONTENT_PATH_FILTER}
+  GROUP BY path_group
+  ORDER BY (fetched + clicked) DESC, surfaced DESC
+  LIMIT {limit:UInt32}`;
+
+// The infrastructure traffic CITED_PAGES_QUERY drops. Not citations — real AI
+// bots read robots.txt and sitemaps — but worth one line above the table so the
+// number does not simply vanish from the dashboard.
+const AI_INFRA_HITS_QUERY = `
+  SELECT path_group AS page, count() AS hits
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND actor_type LIKE 'ai_%'
+    AND ${NOT_SPOOFED}
+    AND NOT (${CONTENT_PATH_FILTER})
+  GROUP BY path_group
+  ORDER BY hits DESC
+  LIMIT 5`;
+
+const CITED_BY_SOURCE_QUERY = `
+  SELECT ai_referral AS source, count() AS clicks
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND actor_type = 'human' AND ai_referral != ''
+  GROUP BY source ORDER BY clicks DESC`;
+
+const CITED_BY_OPERATOR_QUERY = `
+  SELECT operator, count() AS crawls
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND actor_type LIKE 'ai_%' AND operator != ''
+    AND ${NOT_SPOOFED}
+  GROUP BY operator ORDER BY crawls DESC`;
+
+// Live feed: latest retrieval hits only (ai_fetcher/ai_search) — training crawls
+// are volume noise here, they don't mean "cited". Time-bounded to the selected
+// range so the query never scans all retained partitions on a large install.
+const CITED_FEED_QUERY = `
+  SELECT ts, bot_id, operator, actor_type, path, country
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND actor_type IN ('ai_fetcher', 'ai_search')
+    AND ${NOT_SPOOFED}
+  ORDER BY ts DESC LIMIT 30`;
+
+// Pages where AI bots ran into errors — a broken page that AI links to or
+// re-crawls is a lost citation. argMax(status, ts) = the most recent status.
+//
+// verification != 'spoofed' is load-bearing, not a nicety: a vulnerability
+// scanner that forges an AI user-agent IS classified ai_*, so without this the
+// panel fills up with /.env and /.aws/credentials probes and buries the real
+// broken pages. 'unverified' stays in — most installs never enable verification,
+// and dropping it would empty the panel for them.
+//
+// ever_ok answers "did this path ever work *for AI* in the window": false means
+// AI is chasing a URL that never existed (fix with a redirect), true means a
+// live page broke (fix the page).
+const BROKEN_CITATIONS_QUERY = `
+  SELECT path_group AS page,
+         countIf(status >= 400) AS ai_errors,
+         argMax(status, ts) AS sample_status,
+         max(ts) AS last_hit,
+         countIf(status < 400) > 0 AS ever_ok
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND actor_type LIKE 'ai_%'
+    AND verification != 'spoofed'
+  GROUP BY path_group
+  HAVING ai_errors > 0
+  ORDER BY ai_errors DESC
+  LIMIT {limit:UInt32}`;
+
+// Pages real humans read that no AI bot has fetched in the window — content
+// invisible to AI. Needs human traffic as the baseline: sites that only ingest
+// bot traffic get an empty list (documented in the UI empty-state).
+// "Page" means successful GET/HEAD non-asset paths — otherwise every stylesheet,
+// bundle and API endpoint humans load would show up as a "blind spot".
+//
+// This panel claims "pages PEOPLE read", so it may only count sessions that
+// behaved like a browser — one that fetched at least one render asset. actor_type
+// "human" is the classifier's fallback for any user-agent it does not recognise
+// (matcher.ts:132). Measured on a live site: of 8809 sessions filed as "human",
+// only 991 ever requested the main script — 89% never rendered anything.
+//
+// An earlier version excluded sessions that walked >= 20 distinct paths. It
+// caught a single sweeping scanner and completely missed the distributed kind,
+// which is what a public site actually gets — after that fix /.env still topped
+// the list with 18 hits from 17 separate one-path sessions. Requiring browser
+// behaviour catches both, because no scanner pulls the stylesheet.
+//
+// Fail-open via {browserOnly:UInt8}: a site whose assets are served by a CDN the
+// sensor never sees has no render-asset rows at all, and filtering on them would
+// empty the panel instead of cleaning it.
+//
+// Keys on session_id: bot_ip is empty for humans (enrich.ts:52) and ip_hash is
+// re-salted daily, so neither identifies a visitor across the window.
+const BLIND_SPOTS_QUERY = `
+  SELECT path_group AS page,
+         countIf(actor_type = 'human' AND status < 400) AS human_hits,
+         uniqIf(session_id, actor_type = 'human' AND status < 400) AS readers
+  FROM events
+  WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+    AND method IN ('GET', 'HEAD')
+    AND ${CONTENT_PATH_FILTER}
+    AND (
+      -- Bot rows must ALWAYS survive this WHERE: they are what the HAVING below
+      -- checks for AI coverage. Filtering them out here would make "no AI has
+      -- seen this page" trivially true and turn every page into a blind spot.
+      actor_type != 'human'
+      OR {browserOnly:UInt8} = 0
+      OR session_id IN (
+        SELECT session_id FROM events
+        WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+          AND actor_type = 'human'
+          AND ${RENDER_ASSET_MATCH}
+        GROUP BY session_id
+      )
+    )
+  GROUP BY path_group
+  HAVING countIf(actor_type LIKE 'ai_%' AND ${NOT_SPOOFED}) = 0 AND human_hits > 0
+  ORDER BY human_hits DESC
+  LIMIT {limit:UInt32}`;
+
+// Does this site's sensor see render assets at all? If not, the browser-behaviour
+// filter has nothing to work with and must be skipped rather than empty the panel.
+const HAS_RENDER_ASSETS_QUERY = `
+  SELECT count() AS n
+  FROM (
+    SELECT 1 FROM events
+    WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
+      AND actor_type = 'human' AND ${RENDER_ASSET_MATCH}
+    LIMIT 1
+  )`;
+
+// Crawl volume per vendor from the daily rollup (cheap; no ai_referral needed
+// here). `date > today() - days` = exactly the last `days` calendar dates
+// including today — `>=` would silently include one extra day.
+const CRAWLS_BY_OPERATOR_QUERY = `
+  SELECT operator, sum(hits) AS crawls
+  FROM daily_bot_stats
+  WHERE site_id = {site:String} AND date > today() - {days:UInt32}
+    AND actor_type LIKE 'ai_%' AND operator != ''
+    AND ${NOT_SPOOFED}
+  GROUP BY operator ORDER BY crawls DESC`;
+
+// Human click-throughs per assistant from the daily referrals rollup.
+const CLICKS_BY_SOURCE_QUERY = `
+  SELECT ai_referral AS source, sum(hits) AS clicks
+  FROM daily_referrals
+  WHERE site_id = {site:String} AND date > today() - {days:UInt32}
+  GROUP BY source ORDER BY clicks DESC`;
+
+/** Crawl-side operator -> the ai_referral source of the same vendor's assistant. */
+const OPERATOR_TO_REFERRAL: Record<string, string> = {
+  openai: "chatgpt",
+  anthropic: "claude",
+  perplexity: "perplexity",
+  google: "gemini",
+  microsoft: "copilot",
+  deepseek: "deepseek",
+  xai: "grok",
+  mistral: "mistral",
+  meta: "meta"
+};
+
+/** Joins crawls (by operator) with clicks (by ai_referral) into take-vs-give rows.
+ * Operators without a consumer assistant keep clicks=0; referral sources with no
+ * observed crawler get crawls=0 and a null ratio (never divide by zero). */
+export function joinCrawlToRefer(
+  crawls: Array<{ operator: string; crawls: number }>,
+  clicks: Array<{ source: string; clicks: number }>
+): CrawlToReferRow[] {
+  const clicksBySource = new Map(clicks.map((row) => [row.source, row.clicks]));
+  const usedSources = new Set<string>();
+
+  const rows: CrawlToReferRow[] = crawls.map((row) => {
+    // Object.hasOwn: row.operator comes from the database, and a plain index
+    // would resolve inherited members ("toString", "constructor") to functions.
+    const source = Object.hasOwn(OPERATOR_TO_REFERRAL, row.operator) ? OPERATOR_TO_REFERRAL[row.operator] : undefined;
+    const clicked = source !== undefined ? clicksBySource.get(source) ?? 0 : 0;
+    if (source !== undefined && clicksBySource.has(source)) {
+      usedSources.add(source);
+    }
+    return {
+      vendor: row.operator,
+      crawls: row.crawls,
+      clicks: clicked,
+      ratio: row.crawls > 0 ? clicked / row.crawls : null,
+      hasAssistant: source !== undefined
+    };
+  });
+
+  for (const row of clicks) {
+    if (!usedSources.has(row.source)) {
+      rows.push({ vendor: row.source, crawls: 0, clicks: row.clicks, ratio: null, hasAssistant: true });
+    }
+  }
+
+  return rows.sort((a, b) => b.crawls - a.crawls || b.clicks - a.clicks || a.vendor.localeCompare(b.vendor));
+}
 
 export function createStatsStore(client: ChQueryClientLike): StatsStore {
   async function rows<T>(query: string, params?: Record<string, unknown>): Promise<T[]> {
@@ -346,11 +662,35 @@ export function createStatsStore(client: ChQueryClientLike): StatsStore {
          GROUP BY bot_id ORDER BY hits DESC`,
         params
       ),
-      rows<{ ip: string; country: string; as_org: string; claimed: string; hits: string; last_seen: string }>(
-        `SELECT bot_ip AS ip, any(country) AS country, any(as_org) AS as_org,
-                any(bot_id) AS claimed, count() AS hits, max(ts) AS last_seen
-         FROM events WHERE ${WINDOW} AND verification = 'spoofed' AND bot_ip != ''
-         GROUP BY bot_ip ORDER BY hits DESC LIMIT 50`,
+      // argMax(..., ts), never any(): a forging IP rotates user-agents, and any()
+      // returns an ARBITRARY member of the group. On a live site that labelled at
+      // least 441 hits "chatgpt-user" while chatgpt-user's own spoofed total was
+      // 349. claimed_variants exposes the rotation instead of hiding it.
+      rows<{
+        ip: string;
+        country: string;
+        as_org: string;
+        claimed: string;
+        claimed_variants: string;
+        hits: string;
+        last_seen: string;
+      }>(
+        // One argMax over a tuple, ordered by the whole tuple: picking bot_id,
+        // country and as_org with three separate argMax calls could take them
+        // from three different rows, and argMax on a tie is documented as
+        // nondeterministic — second-resolution logs tie constantly. `ip` is the
+        // secondary sort key so the 50-row cutoff is stable when many sources
+        // share a hit count.
+        `SELECT ip, latest.1 AS claimed, latest.2 AS country, latest.3 AS as_org,
+                claimed_variants, hits, last_seen
+         FROM (
+           SELECT bot_ip AS ip,
+                  argMax((bot_id, country, as_org), (ts, bot_id, country, as_org)) AS latest,
+                  uniq(bot_id) AS claimed_variants,
+                  count() AS hits, max(ts) AS last_seen
+           FROM events WHERE ${WINDOW} AND verification = 'spoofed' AND bot_ip != ''
+           GROUP BY bot_ip ORDER BY hits DESC, ip LIMIT 50
+         )`,
         params
       )
     ]);
@@ -362,6 +702,7 @@ export function createStatsStore(client: ChQueryClientLike): StatsStore {
         country: row.country,
         asOrg: row.as_org,
         claimedBot: row.claimed,
+        claimedVariants: toNum(row.claimed_variants),
         hits: toNum(row.hits),
         lastSeen: row.last_seen
       }))
@@ -392,20 +733,115 @@ export function createStatsStore(client: ChQueryClientLike): StatsStore {
     return { dates, pages, series };
   }
 
-  async function referralFunnels(site: string, days: number, limit = 50): Promise<ReferralFunnelRow[]> {
-    const raw = await rows<{ page: string; crawled: string; surfaced: string; clicked: string }>(
-      REFERRAL_FUNNELS_QUERY,
-      { site, days, limit }
-    );
+  async function aiLandingPages(site: string, days: number, limit = 50): Promise<AiLandingPageRow[]> {
+    const raw = await rows<{
+      page: string;
+      training_hits: string;
+      search_hits: string;
+      fetch_hits: string;
+      clicked: string;
+    }>(AI_LANDING_PAGES_QUERY, { site, days, limit });
     return raw.map((row) => ({
       page: row.page,
-      crawled: toNum(row.crawled),
-      surfaced: toNum(row.surfaced),
+      training: toNum(row.training_hits),
+      search: toNum(row.search_hits),
+      fetch: toNum(row.fetch_hits),
       clicked: toNum(row.clicked)
     }));
   }
 
-  return { overview, bots, botDetail, pages, security, pagesDaily, referralFunnels };
+  async function citations(site: string, days: number, limit = 50): Promise<CitationsResult> {
+    const params = { site, days };
+    const [pages, bySource, byOperator, feed, infra] = await Promise.all([
+      rows<{ page: string; fetched: string; surfaced: string; clicked: string; last_cited: string }>(
+        CITED_PAGES_QUERY,
+        { ...params, limit }
+      ),
+      rows<{ source: string; clicks: string }>(CITED_BY_SOURCE_QUERY, params),
+      rows<{ operator: string; crawls: string }>(CITED_BY_OPERATOR_QUERY, params),
+      rows<{ ts: string; bot_id: string; operator: string; actor_type: string; path: string; country: string }>(
+        CITED_FEED_QUERY,
+        params
+      ),
+      rows<{ page: string; hits: string }>(AI_INFRA_HITS_QUERY, params)
+    ]);
+
+    return {
+      pages: pages.map((row) => ({
+        page: row.page,
+        fetched: toNum(row.fetched),
+        surfaced: toNum(row.surfaced),
+        clicked: toNum(row.clicked),
+        lastCited: row.last_cited
+      })),
+      bySource: bySource.map((row) => ({ source: row.source, clicks: toNum(row.clicks) })),
+      byOperator: byOperator.map((row) => ({ operator: row.operator, crawls: toNum(row.crawls) })),
+      feed: feed.map((row) => ({
+        ts: row.ts,
+        botId: row.bot_id,
+        operator: row.operator,
+        actorType: row.actor_type,
+        path: row.path,
+        country: row.country
+      })),
+      infra: infra.map((row) => ({ page: row.page, hits: toNum(row.hits) }))
+    };
+  }
+
+  async function crawlHealth(site: string, days: number, limit = 50): Promise<CrawlHealthResult> {
+    const params = { site, days, limit };
+    const assetProbe = await rows<{ n: string }>(HAS_RENDER_ASSETS_QUERY, { site, days });
+    const browserOnly = toNum(assetProbe[0]?.n) > 0 ? 1 : 0;
+    const [broken, blindSpots] = await Promise.all([
+      rows<{ page: string; ai_errors: string; sample_status: string; last_hit: string; ever_ok: number }>(
+        BROKEN_CITATIONS_QUERY,
+        params
+      ),
+      rows<{ page: string; human_hits: string; readers: string }>(BLIND_SPOTS_QUERY, { ...params, browserOnly })
+    ]);
+
+    return {
+      broken: broken.map((row) => ({
+        page: row.page,
+        aiErrors: toNum(row.ai_errors),
+        sampleStatus: toNum(row.sample_status),
+        lastHit: row.last_hit,
+        everOk: toNum(row.ever_ok) === 1
+      })),
+      blindSpots: blindSpots.map((row) => ({
+        page: row.page,
+        humanHits: toNum(row.human_hits),
+        readers: toNum(row.readers)
+      }))
+    };
+  }
+
+  async function crawlToRefer(site: string, days: number): Promise<{ rows: CrawlToReferRow[] }> {
+    const params = { site, days };
+    const [crawls, clicks] = await Promise.all([
+      rows<{ operator: string; crawls: string }>(CRAWLS_BY_OPERATOR_QUERY, params),
+      rows<{ source: string; clicks: string }>(CLICKS_BY_SOURCE_QUERY, params)
+    ]);
+    return {
+      rows: joinCrawlToRefer(
+        crawls.map((row) => ({ operator: row.operator, crawls: toNum(row.crawls) })),
+        clicks.map((row) => ({ source: row.source, clicks: toNum(row.clicks) }))
+      )
+    };
+  }
+
+  return {
+    overview,
+    bots,
+    botDetail,
+    pages,
+    security,
+    pagesDaily,
+    aiLandingPages,
+    citations,
+    crawlHealth,
+    crawlToRefer
+  };
 }
 
 export function pivotTimeseries(

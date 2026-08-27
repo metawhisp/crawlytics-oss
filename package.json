@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Self-hosted analytics for inbound AI traffic.",
-  "license": "AGPL-3.0-only",
+  "license": "UNLICENSED",
   "packageManager": "pnpm@10.28.1",
   "engines": {
     "node": ">=22.0.0",

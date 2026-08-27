@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+import type { AlertsConfig, AlertsState } from "../alerts/config.js";
 import type { ApiKey, CreateKeyInput, CreateSiteInput, MetadataStore, Site } from "./store.js";
 import { generateApiKey } from "./store.js";
 
@@ -9,6 +10,8 @@ interface FileData {
   keys: ApiKey[];
   /** License key entered at runtime (UI/env), persisted so it survives restarts. */
   license?: string | null;
+  /** Alerts config + cooldown state — persisted so a restart doesn't re-send alerts. */
+  alerts?: { config: AlertsConfig | null; state: AlertsState };
 }
 
 function fail(error: unknown): Promise<never> {
@@ -26,6 +29,8 @@ export function createFileStore(filePath: string): MetadataStore {
   const sites = new Map<string, Site>();
   const keys = new Map<string, ApiKey>();
   let licenseKey: string | null = null;
+  let alertsConfig: AlertsConfig | null = null;
+  let alertsState: AlertsState = {};
 
   if (existsSync(filePath)) {
     try {
@@ -37,6 +42,8 @@ export function createFileStore(filePath: string): MetadataStore {
         keys.set(key.key, key);
       }
       licenseKey = raw.license ?? null;
+      alertsConfig = raw.alerts?.config ?? null;
+      alertsState = raw.alerts?.state ?? {};
     } catch {
       // Corrupt/unreadable: quarantine the bad file (so the next write does not
       // silently clobber it) and start empty rather than crash the server.
@@ -50,7 +57,12 @@ export function createFileStore(filePath: string): MetadataStore {
   }
 
   function persist(): void {
-    const data: FileData = { sites: [...sites.values()], keys: [...keys.values()], license: licenseKey };
+    const data: FileData = {
+      sites: [...sites.values()],
+      keys: [...keys.values()],
+      license: licenseKey,
+      alerts: { config: alertsConfig, state: alertsState }
+    };
     mkdirSync(dirname(filePath), { recursive: true });
     const tmp = `${filePath}.tmp`;
     writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
@@ -129,6 +141,34 @@ export function createFileStore(filePath: string): MetadataStore {
         persist();
       } catch (error) {
         licenseKey = previous; // roll back so memory matches disk
+        return fail(error);
+      }
+      return Promise.resolve();
+    },
+    getAlertsConfig(): Promise<AlertsConfig | null> {
+      return Promise.resolve(alertsConfig);
+    },
+    setAlertsConfig(config: AlertsConfig): Promise<void> {
+      const previous = alertsConfig;
+      alertsConfig = config;
+      try {
+        persist();
+      } catch (error) {
+        alertsConfig = previous; // roll back
+        return fail(error);
+      }
+      return Promise.resolve();
+    },
+    getAlertsState(): Promise<AlertsState> {
+      return Promise.resolve({ ...alertsState });
+    },
+    setAlertsState(state: AlertsState): Promise<void> {
+      const previous = alertsState;
+      alertsState = { ...state };
+      try {
+        persist();
+      } catch (error) {
+        alertsState = previous; // roll back
         return fail(error);
       }
       return Promise.resolve();

@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 
+import type { AlertsConfig, AlertsState } from "../alerts/config.js";
+
 /**
  * Metadata layer contract (sites, API keys, license). Backed by an in-memory
  * store (tests + env fallback) and, later, Postgres/Drizzle. Keys carry a
@@ -49,6 +51,12 @@ export interface MetadataStore {
   getLicenseKey(): Promise<string | null>;
   /** Persist (or clear with null) the license key. */
   setLicenseKey(key: string | null): Promise<void>;
+  /** Alerts config; null until the owner saves one (alerts are off by default). */
+  getAlertsConfig(): Promise<AlertsConfig | null>;
+  setAlertsConfig(config: AlertsConfig): Promise<void>;
+  /** Alert cooldown state (dedup key -> lastFired ISO); survives restarts in the file store. */
+  getAlertsState(): Promise<AlertsState>;
+  setAlertsState(state: AlertsState): Promise<void>;
 }
 
 /** `cwi_…` for ingest, `cwr_…` for read — the prefix makes scope visible. */

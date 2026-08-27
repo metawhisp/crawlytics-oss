@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildApp,
@@ -38,7 +38,10 @@ const FAKE_STATS = {
   pages: () => Promise.resolve([]),
   security: () => Promise.resolve({ spoofedByBot: [], spoofedSources: [] }),
   pagesDaily: () => Promise.resolve({ dates: [], pages: [], series: [] }),
-  referralFunnels: () => Promise.resolve([])
+  aiLandingPages: vi.fn(() => Promise.resolve([])),
+  citations: vi.fn(() => Promise.resolve({ pages: [], bySource: [], byOperator: [], feed: [], infra: [] })),
+  crawlHealth: vi.fn(() => Promise.resolve({ broken: [], blindSpots: [] })),
+  crawlToRefer: vi.fn(() => Promise.resolve({ rows: [] }))
 };
 
 async function makeApp(password?: string) {
@@ -101,6 +104,215 @@ describe("dashboard API auth", () => {
     const app = await makeApp();
     const response = await app.inject({ method: "GET", url: "/api/v1/overview?site=m&hours=9999" });
     expect(response.statusCode).toBe(400);
+  });
+});
+
+describe("GET /api/v1/citations", () => {
+  it("requires a session when a password is set", async () => {
+    const app = await makeApp("secret1");
+    const response = await app.inject({ method: "GET", url: "/api/v1/citations?site=acme" });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("serves the citations payload with defaults applied", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/citations?site=acme" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ pages: [], bySource: [], byOperator: [], feed: [], infra: [] });
+    expect(FAKE_STATS.citations).toHaveBeenLastCalledWith("acme", 30, 50);
+  });
+
+  it("passes non-default days and limit through to the store", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/citations?site=acme&days=7&limit=25" });
+    expect(response.statusCode).toBe(200);
+    expect(FAKE_STATS.citations).toHaveBeenLastCalledWith("acme", 7, 25);
+  });
+
+  it("rejects out-of-range days and limit", async () => {
+    const app = await makeApp();
+    expect((await app.inject({ method: "GET", url: "/api/v1/citations?site=m&days=0" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/citations?site=m&days=400" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/citations?site=m&limit=0" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/citations?site=m&limit=101" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/citations?days=30" })).statusCode).toBe(400); // no site
+  });
+});
+
+describe("GET /api/v1/crawl-health", () => {
+  it("requires a session when a password is set", async () => {
+    const app = await makeApp("secret1");
+    const response = await app.inject({ method: "GET", url: "/api/v1/crawl-health?site=acme" });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("serves broken pages + blind spots with defaults applied", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/crawl-health?site=acme" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ broken: [], blindSpots: [] });
+    expect(FAKE_STATS.crawlHealth).toHaveBeenLastCalledWith("acme", 30, 50);
+  });
+
+  it("passes non-default days and limit through to the store", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/crawl-health?site=acme&days=90&limit=10" });
+    expect(response.statusCode).toBe(200);
+    expect(FAKE_STATS.crawlHealth).toHaveBeenLastCalledWith("acme", 90, 10);
+  });
+
+  it("rejects out-of-range params", async () => {
+    const app = await makeApp();
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-health?site=m&days=0" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-health?site=m&days=999" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-health?site=m&limit=0" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-health?days=30" })).statusCode).toBe(400);
+  });
+});
+
+describe("GET /api/v1/crawl-to-refer", () => {
+  it("requires a session when a password is set", async () => {
+    const app = await makeApp("secret1");
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-to-refer?site=acme" })).statusCode).toBe(401);
+  });
+
+  it("serves the vendor rows with defaults applied", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/crawl-to-refer?site=acme" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ rows: [] });
+    expect(FAKE_STATS.crawlToRefer).toHaveBeenLastCalledWith("acme", 30);
+  });
+
+  it("passes non-default days through to the store", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/crawl-to-refer?site=acme&days=7" });
+    expect(response.statusCode).toBe(200);
+    expect(FAKE_STATS.crawlToRefer).toHaveBeenLastCalledWith("acme", 7);
+  });
+
+  it("rejects out-of-range params", async () => {
+    const app = await makeApp();
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-to-refer?site=m&days=0" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/v1/crawl-to-refer?days=30" })).statusCode).toBe(400);
+  });
+});
+
+describe("GET /api/v1/robots-suggestion", () => {
+  it("requires a session when a password is set", async () => {
+    const app = await makeApp("secret1");
+    expect(
+      (await app.inject({ method: "GET", url: "/api/v1/robots-suggestion?site=s" })).statusCode
+    ).toBe(401);
+  });
+
+  it("returns robots.txt + llms.txt honoring the policy params", async () => {
+    const app = await makeApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/robots-suggestion?site=s&train=deny&search=allow&fetch=allow"
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{ robotsTxt: string; llmsTxt: string }>();
+    expect(body.robotsTxt).toContain("User-agent:");
+    expect(body.robotsTxt).toContain("Disallow: /");
+    expect(body.llmsTxt).toContain("#");
+  });
+
+  it("falls back to defaults on garbage policy values instead of erroring", async () => {
+    const app = await makeApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/robots-suggestion?site=s&train=banana&search=&fetch=whatever"
+    });
+    expect(response.statusCode).toBe(200);
+    // defaults: train=deny -> a Disallow group exists; search/fetch=allow -> an Allow group exists
+    const body = response.json<{ robotsTxt: string }>();
+    expect(body.robotsTxt).toContain("Disallow: /");
+    expect(body.robotsTxt).toContain("Allow: /");
+  });
+
+  it("404s for an unknown site", async () => {
+    const app = await makeApp();
+    expect(
+      (await app.inject({ method: "GET", url: "/api/v1/robots-suggestion?site=nope" })).statusCode
+    ).toBe(404);
+  });
+});
+
+describe("CSV export of the new tables (F6)", () => {
+  it("exports citations and funnels as CSV using the days window", async () => {
+    const app = await makeApp();
+    const citations = await app.inject({
+      method: "GET",
+      url: "/api/v1/export.csv?site=acme&hours=24&table=citations&days=7"
+    });
+    expect(citations.statusCode).toBe(200);
+    expect(citations.headers["content-type"]).toContain("text/csv");
+    expect(FAKE_STATS.citations).toHaveBeenLastCalledWith("acme", 7, 50);
+
+    const funnels = await app.inject({
+      method: "GET",
+      url: "/api/v1/export.csv?site=acme&hours=24&table=funnels"
+    });
+    expect(funnels.statusCode).toBe(200);
+    expect(FAKE_STATS.aiLandingPages).toHaveBeenLastCalledWith("acme", 30, 50);
+  });
+
+  it("still rejects unknown tables", async () => {
+    const app = await makeApp();
+    expect(
+      (await app.inject({ method: "GET", url: "/api/v1/export.csv?site=m&hours=24&table=nope" })).statusCode
+    ).toBe(400);
+  });
+});
+
+describe("alerts config API (/api/v1/alerts)", () => {
+  it("requires a session when a password is set", async () => {
+    const app = await makeApp("secret1");
+    expect((await app.inject({ method: "GET", url: "/api/v1/alerts" })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ method: "PUT", url: "/api/v1/alerts", payload: { webhookUrl: "" } })).statusCode
+    ).toBe(401);
+  });
+
+  it("returns defaults (alerts off) until a config is saved", async () => {
+    const app = await makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/alerts" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ webhookUrl: "", spikeFactor: 3, cooldownMinutes: 360 });
+  });
+
+  it("saves and returns the config", async () => {
+    const app = await makeApp();
+    const put = await app.inject({
+      method: "PUT",
+      url: "/api/v1/alerts",
+      payload: {
+        webhookUrl: "https://hooks.example/x",
+        rules: { spike: true, newBot: false, spoof: true, brokenCitation: true },
+        spikeFactor: 5,
+        cooldownMinutes: 60
+      }
+    });
+    expect(put.statusCode).toBe(200);
+    const get = await app.inject({ method: "GET", url: "/api/v1/alerts" });
+    expect(get.json()).toMatchObject({ webhookUrl: "https://hooks.example/x", spikeFactor: 5 });
+  });
+
+  it("rejects invalid webhook URLs and out-of-range numbers", async () => {
+    const app = await makeApp();
+    const bad = (payload: Record<string, unknown>) => app.inject({ method: "PUT", url: "/api/v1/alerts", payload });
+    expect((await bad({ webhookUrl: "not-a-url" })).statusCode).toBe(400);
+    expect((await bad({ webhookUrl: "ftp://x/y" })).statusCode).toBe(400);
+    expect((await bad({ webhookUrl: "", spikeFactor: 0 })).statusCode).toBe(400);
+    expect((await bad({ webhookUrl: "", cooldownMinutes: 0 })).statusCode).toBe(400);
+  });
+
+  it("sends a test webhook only when a URL is configured", async () => {
+    const app = await makeApp();
+    // no config yet -> 400
+    expect((await app.inject({ method: "POST", url: "/api/v1/alerts/test" })).statusCode).toBe(400);
   });
 });
 
@@ -345,6 +557,11 @@ describe("dashboard license unlock (POST /api/license)", () => {
       { method: "GET" as const, url: `/api/v1/bot/gptbot?${w}` },
       { method: "GET" as const, url: `/api/v1/pages?${w}` },
       { method: "GET" as const, url: `/api/v1/security?${w}` },
+      { method: "GET" as const, url: `/api/v1/citations?site=acme` },
+      { method: "GET" as const, url: `/api/v1/crawl-health?site=acme` },
+      { method: "GET" as const, url: `/api/v1/crawl-to-refer?site=acme` },
+      { method: "GET" as const, url: `/api/v1/robots-suggestion?site=acme` },
+      { method: "GET" as const, url: `/api/v1/alerts` },
       { method: "GET" as const, url: `/api/v1/export.csv?${w}&table=bots` }
     ]) {
       expect((await app.inject(req)).statusCode, `${req.method} ${req.url}`).toBe(403);

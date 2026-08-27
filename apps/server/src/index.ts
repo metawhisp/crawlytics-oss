@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { createIpVerifier } from "@crawlytics/detector";
 import { loadCompiledBots } from "@crawlytics/registry";
 
+import { deliverWebhook } from "./alerts/deliver.js";
+import { createAlertsRunner } from "./alerts/runner.js";
 import { buildApp, resolveDashboardEnabled, resolveDevOverride } from "./app.js";
 import { createBatcher } from "./batcher.js";
 import { createChClient, createChMigrationClient, createChSink } from "./clickhouse.js";
@@ -82,7 +84,28 @@ if (isMain) {
     logger: true
   });
 
+  // Alerts scheduler — a no-op until the owner saves a webhook URL in Setup
+  // (the runner re-checks the stored config every tick; default is OFF, the
+  // server never posts anywhere out of the box). Fail-open: a broken tick logs
+  // and skips inside tick(), it never crashes the server.
+  const alertsIntervalMs = Math.min(
+    Math.max(Number(process.env["CRAWLYTICS_ALERTS_INTERVAL_MS"]) || 300_000, 60_000),
+    3_600_000
+  );
+  const alertsRunner = createAlertsRunner({
+    metadata,
+    client,
+    deliver: deliverWebhook,
+    // the rule look-back covers ~2 intervals so events between ticks aren't missed
+    windowMinutes: Math.max(Math.ceil((alertsIntervalMs / 60_000) * 2), 5)
+  });
+  const alertsTimer = setInterval(() => {
+    void alertsRunner.tick();
+  }, alertsIntervalMs);
+  alertsTimer.unref();
+
   const shutdown = async (): Promise<void> => {
+    clearInterval(alertsTimer);
     await app.close();
     await batcher.stop();
     await client.close();
