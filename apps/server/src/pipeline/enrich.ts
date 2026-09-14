@@ -3,6 +3,7 @@ import type { Detector, IpVerifier } from "@crawlytics/detector";
 import type { BotRegistryEntry } from "@crawlytics/registry";
 import type { EnrichedEvent, RawLogEvent } from "@crawlytics/shared";
 
+import type { AsnLookup } from "./asn-lookup.js";
 import { dailyIpHash, utcDay } from "./ip-hash.js";
 import { pathGroup, splitPathQuery } from "./path-group.js";
 import { refererOrigin } from "./redact.js";
@@ -18,6 +19,12 @@ export interface EnricherOptions {
   sessionizer?: Sessionizer;
   detector?: Detector;
   ingestSource?: string;
+  /**
+   * Optional IP -> network database. Used only to fill fields the sensor could
+   * not supply: an edge like Cloudflare knows the address better than an hourly
+   * dump, so whatever it reports wins.
+   */
+  network?: AsnLookup;
 }
 
 export type Enricher = (siteId: string, event: RawLogEvent) => Promise<EnrichedEvent>;
@@ -34,6 +41,14 @@ export function createEnricher(options: EnricherOptions): Enricher {
     const isBot = classification.actorType !== "human";
 
     const ipHash = dailyIpHash(event.ip, options.secret, utcDay(tsMs));
+
+    // A plain access log carries none of these, which is why an install not
+    // behind an edge would otherwise have no network data at all.
+    // Empty string and 0 are the unknown sentinels in this schema, so a sensor
+    // reporting either is reporting nothing — treat it as a gap to fill rather
+    // than as an answer that blocks the lookup.
+    const missingNetwork = !event.country || !event.asn || !event.asOrg;
+    const network = missingNetwork ? (options.network?.find(event.ip) ?? null) : null;
     const { pathname, query } = splitPathQuery(event.path);
 
     let verification = "na";
@@ -65,9 +80,9 @@ export function createEnricher(options: EnricherOptions): Enricher {
       referer: refererOrigin(event.referer),
       ai_referral: aiReferral,
       topic_id: "",
-      country: event.country ?? "",
-      asn: event.asn ?? 0,
-      as_org: event.asOrg ?? "",
+      country: event.country || network?.country || "",
+      asn: event.asn || network?.asn || 0,
+      as_org: event.asOrg || network?.asOrg || "",
       session_id: sessionizer.assign(sessionKey, tsMs),
       ingest_source: ingestSource
     };

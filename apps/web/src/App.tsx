@@ -30,7 +30,7 @@ const PERIODS = [
   { hours: 720, label: "30d" }
 ];
 
-const TABS = ["Overview", "Explore", "Bots", "Pages", "Citations", "Referrals", "Security", "Setup"] as const;
+const TABS = ["Overview", "Explore", "Bots", "Pages", "Retrieval", "Referrals", "Security", "Setup"] as const;
 type Tab = (typeof TABS)[number];
 
 function actorBadge(actorType: string): { cls: string; label: string } {
@@ -62,7 +62,7 @@ const NAV_ICONS: Record<string, string> = {
   Explore: "M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.35-4.35",
   Bots: "M12 3v3M8 9h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM9 13h.01M15 13h.01",
   Pages: "M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM14 3v6h6",
-  Citations: "M7 7h10M7 11h6M4 4h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-8l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z",
+  Retrieval: "M7 7h10M7 11h6M4 4h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-8l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z",
   Referrals: "M3 4h18M6 4l5 7v7l2-1v-6l5-7",
   Security: "M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6l8-3z",
   Setup: "M12 9v6M9 12h6M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"
@@ -305,7 +305,7 @@ export function App() {
       {tab === "Explore" ? <Explore site={effectiveSite} hours={hours} /> : null}
       {tab === "Bots" ? <BotsTab site={effectiveSite} hours={hours} /> : null}
       {tab === "Pages" ? <PagesTab site={effectiveSite} hours={hours} /> : null}
-        {tab === "Citations" ? <Citations site={effectiveSite} /> : null}
+        {tab === "Retrieval" ? <Citations site={effectiveSite} /> : null}
         {tab === "Referrals" ? <AiLandingPages site={effectiveSite} /> : null}
         {tab === "Security" ? <SecurityTab site={effectiveSite} hours={hours} /> : null}
         {tab === "Setup" ? <Onboarding /> : null}
@@ -322,9 +322,14 @@ function OverviewTab({ data }: { data: Overview | null }) {
     <>
       <div className="kpis">
         <div className="kpi">
-          <div className="l">AI hits</div>
+          <div className="l" title="Подделки под AI-ботов сюда не входят — они в плитке Spoofed">
+            AI hits
+          </div>
           <div className="v">{fmtNum(kpis?.aiHits ?? 0)}</div>
           <Delta now={kpis?.aiHits ?? 0} prev={prev?.aiHits ?? 0} />
+          <div className="kpi-split" title="Проверено по опубликованным вендором диапазонам или PTR · вендор не публикует способ проверки">
+            {fmtNum(kpis?.aiVerified ?? 0)} проверено · {fmtNum(kpis?.aiUnverified ?? 0)} не проверяется
+          </div>
         </div>
         <div className="kpi">
           <div className="l">Unique AI bots</div>
@@ -388,7 +393,7 @@ function OverviewTab({ data }: { data: Overview | null }) {
           {data && data.topPages.length > 0 ? (
             <table>
               <thead>
-                <tr><th>Page</th><th className="num">AI hits</th><th className="num">Bots</th><th className="num">Total</th></tr>
+                <tr><th>Page</th><th className="num">AI hits</th><th className="num">AI bots</th><th className="num">Total</th></tr>
               </thead>
               <tbody>
                 {data.topPages.map((page) => (
@@ -571,7 +576,7 @@ function PagesTab({ site, hours }: { site: string; hours: number }) {
       {pages.length > 0 ? (
         <table>
           <thead>
-            <tr><th>Page</th><th className="num">AI hits</th><th className="num">Training</th><th className="num">AI search</th><th className="num">Fetchers</th><th className="num">Bots</th><th className="num">Last AI visit</th></tr>
+            <tr><th>Page</th><th className="num">AI hits</th><th className="num">Training</th><th className="num">AI search</th><th className="num">Fetchers</th><th className="num">AI bots</th><th className="num">Last AI visit</th></tr>
           </thead>
           <tbody>
             {pages.map((page) => (

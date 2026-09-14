@@ -24,7 +24,7 @@ function fakeClient(rowsByMatch: Array<[RegExp, unknown[]]>) {
 describe("createStatsStore.overview", () => {
   it("collects KPIs, timeseries, tops and recent in one call", async () => {
     const client = fakeClient([
-      [/AS bot_errors/, [{ ai_hits: "12", unique_bots: "3", verified: "5", spoofed: "2", ai_referrals: "4", bot_errors: "1" }]],
+      [/AS bot_errors/, [{ ai_hits: "12", ai_verified: "9", ai_unverified: "3", unique_bots: "3", verified: "5", spoofed: "2", ai_referrals: "4", bot_errors: "1" }]],
       [/toStartOfHour/, [{ t: "2026-06-10 18:00:00", actor_type: "ai_training", c: "7" }]],
       [/GROUP BY bot_id/, [{ bot_id: "gptbot", operator: "openai", actor_type: "ai_training", hits: "7", pages: "3", spoofed: "1", last_seen: "2026-06-10 19:00:00" }]],
       [/GROUP BY path_group/, [{ path_group: "/blog/:id", ai_hits: "6", bots: "2", hits: "9" }]],
@@ -37,7 +37,10 @@ describe("createStatsStore.overview", () => {
     const overview = await store.overview("acme", 24);
 
     expect(overview.kpis).toEqual({
+      // The headline splits into its two provable halves and never carries forgeries.
       aiHits: 12,
+      aiVerified: 9,
+      aiUnverified: 3,
       uniqueBots: 3,
       verified: 5,
       spoofed: 2,
@@ -67,8 +70,10 @@ describe("createStatsStore.overview", () => {
 describe("createStatsStore.pagesDaily", () => {
   it("aligns dates, orders pages by total, and 0-fills gaps", async () => {
     // Rows come back ordered by (page, date); /a has no row on 2026-06-02.
+    // Reads daily_page_ai_stats — the rollup that carries verification, unlike
+    // the original daily_page_stats.
     const client = fakeClient([
-      [/FROM daily_page_stats/, [
+      [/FROM daily_page_ai_stats/, [
         { date: "2026-06-01", page: "/a", hits: "5" },
         { date: "2026-06-03", page: "/a", hits: "3" },
         { date: "2026-06-01", page: "/b", hits: "10" },
@@ -97,7 +102,11 @@ describe("createStatsStore.pagesDaily", () => {
     expect(client.captured[0]?.query_params).toMatchObject({ site: "acme", days: 30, limit: 10 });
     expect(client.captured[0]?.query).not.toContain("acme'");
     // AI-only: an "AI hits per page" chart must not include human/search/social rows
-    expect(client.captured[0]?.query).toContain("actor_type LIKE 'ai_%'");
+    // AI-only is now guaranteed by the rollup itself (its materialised view
+    // filters actor_type), so the query asserts where it reads and that forged
+    // bots stay out rather than repeating a filter it no longer needs.
+    expect(client.captured[0]?.query).toContain("FROM daily_page_ai_stats");
+    expect(client.captured[0]?.query).toContain("verification != 'spoofed'");
   });
 
   it("returns empty structures when there is no data", async () => {

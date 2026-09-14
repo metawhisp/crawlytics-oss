@@ -66,7 +66,12 @@ if [ "${COUNT:-0}" != "0" ]; then
   fi
   echo "==> --force: truncating events + rollups…"
   ch --query "TRUNCATE TABLE events"
-  for t in daily_bot_stats daily_page_stats daily_referrals; do
+  # EVERY rollup must be listed here. The reload below replays events through the
+  # materialized views, and a rollup left in place gets the whole history added to
+  # itself — these are SummingMergeTree tables. That is also why backup.sh does
+  # not back rollups up: they are derived from events. Adding a rollup? Add it to
+  # this list in the same commit; `ls apps/server/migrations` is the source list.
+  for t in daily_bot_stats daily_page_stats daily_page_ai_stats daily_referrals; do
     ch --query "TRUNCATE TABLE IF EXISTS ${t}"
   done
 fi

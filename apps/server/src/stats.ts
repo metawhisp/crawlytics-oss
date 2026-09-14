@@ -9,7 +9,12 @@ export interface ChQueryClientLike {
 }
 
 export interface OverviewKpis {
+  /** AI hits EXCLUDING forgeries — equals aiVerified + aiUnverified. */
   aiHits: number;
+  /** Checked against the vendor's published ranges or PTR records, and passed. */
+  aiVerified: number;
+  /** No published way to check, or the check could not run. Not an accusation. */
+  aiUnverified: number;
   uniqueBots: number;
   verified: number;
   spoofed: number;
@@ -116,7 +121,8 @@ export interface AiLandingPageRow {
   clicked: number;
 }
 
-/** A page AI actually cites — measured from real traffic, not sampled prompts. */
+/** A page AI retrieved — measured from real traffic, not sampled prompts. Retrieval
+ * is not citation: whether the answer linked to it never reaches the server. */
 export interface CitedPageRow {
   page: string;
   /** Live on-demand fetches by assistants answering a user right now (ai_fetcher). */
@@ -134,7 +140,7 @@ export interface CitationsResult {
   bySource: Array<{ source: string; clicks: number }>;
   /** AI crawl volume per vendor (operator). */
   byOperator: Array<{ operator: string; crawls: number }>;
-  /** Latest retrieval-bot hits (ai_fetcher/ai_search) — the live citation feed. */
+  /** Latest retrieval-bot hits (ai_fetcher/ai_search) — the live retrieval feed. */
   feed: Array<{ ts: string; botId: string; operator: string; actorType: string; path: string; country: string }>;
   /** AI hits on paths excluded from `pages` — robots.txt, sitemaps, assets.
    * Real traffic, just not citations; surfaced so the number doesn't vanish. */
@@ -143,7 +149,7 @@ export interface CitationsResult {
 
 /** Actionable crawl problems, straight from logs. */
 export interface CrawlHealthResult {
-  /** Pages where NON-SPOOFED AI bots hit >=400 — a citation link pointing at a
+  /** Pages where NON-SPOOFED AI bots hit >=400 — a page AI was retrieving that now
    * broken page. `everOk` distinguishes a page that died (true) from a URL that
    * never existed (false). */
   broken: Array<{ page: string; aiErrors: number; sampleStatus: number; lastHit: string; everOk: boolean }>;
@@ -175,9 +181,9 @@ export interface StatsStore {
   pagesDaily(site: string, days: number, limit?: number): Promise<PagesDailyResult>;
   /** Landing pages that got AI referral click-throughs, split by bot class. */
   aiLandingPages(site: string, days: number, limit?: number): Promise<AiLandingPageRow[]>;
-  /** Pages AI cites (live fetches, answer-index hits, human click-throughs) + live feed. */
+  /** Pages AI retrieves (live fetches, answer-index hits, human click-throughs) + live feed. */
   citations(site: string, days: number, limit?: number): Promise<CitationsResult>;
-  /** Broken-citation pages (AI hit >=400) and AI blind spots (human-only pages). */
+  /** Broken pages (AI hit >=400) and AI blind spots (human-only pages). */
   crawlHealth(site: string, days: number, limit?: number): Promise<CrawlHealthResult>;
   /** Take-vs-give per AI vendor: crawl volume vs human clicks its assistant sends back. */
   crawlToRefer(site: string, days: number): Promise<{ rows: CrawlToReferRow[] }>;
@@ -188,7 +194,7 @@ const PREV_WINDOW =
   "site_id = {site:String} AND ts > now() - INTERVAL {hours2:UInt32} HOUR AND ts <= now() - INTERVAL {hours:UInt32} HOUR";
 
 // Paths that are never "a page": static assets and infrastructure files. This
-// lived inline in the blind-spots query only, so the citations panel shipped
+// lived inline in the blind-spots query only, so the retrieval panel shipped
 // without it and ranked /robots.txt above every article on the site. One
 // definition, every panel that talks about content.
 const ASSET_EXTENSIONS =
@@ -206,13 +212,23 @@ const RENDER_ASSET_MATCH = `match(path_group, '(?i)\\\\.(css|js|mjs|png|jpe?g|gi
 // ChatGPT UA shows up as a citation.
 const NOT_SPOOFED = "verification != 'spoofed'";
 
+// ai_hits is the headline number, so it must not contain forgeries: a scanner
+// sending "ChatGPT-User" is classified ai_* and would otherwise be counted both
+// here AND in the spoofed tile beside it. On a live site a quarter of the old
+// number was exactly that double count.
+//
+// ai_verified / ai_unverified split what remains. "unverified" and "na" are one
+// bucket on screen — the vendor either published no way to check, or the check
+// could not run; neither is proof of anything, and neither is an accusation.
 const KPI_SELECT = `
-  countIf(actor_type LIKE 'ai_%') AS ai_hits,
-  uniqIf(bot_id, actor_type LIKE 'ai_%' AND bot_id != '') AS unique_bots,
+  countIf(actor_type LIKE 'ai_%' AND ${NOT_SPOOFED}) AS ai_hits,
+  countIf(actor_type LIKE 'ai_%' AND verification = 'verified') AS ai_verified,
+  countIf(actor_type LIKE 'ai_%' AND verification IN ('unverified', 'na')) AS ai_unverified,
+  uniqIf(bot_id, actor_type LIKE 'ai_%' AND ${NOT_SPOOFED} AND bot_id != '') AS unique_bots,
   countIf(verification = 'verified') AS verified,
   countIf(verification = 'spoofed') AS spoofed,
   countIf(ai_referral != '') AS ai_referrals,
-  countIf(actor_type != 'human' AND status >= 400) AS bot_errors`;
+  countIf(actor_type != 'human' AND status >= 400 AND ${NOT_SPOOFED}) AS bot_errors`;
 
 const BOTS_QUERY = `
   SELECT bot_id, any(operator) AS operator, any(actor_type) AS actor_type,
@@ -224,27 +240,37 @@ const BOTS_QUERY = `
 
 const PAGES_QUERY = `
   SELECT path_group,
-         countIf(actor_type LIKE 'ai_%') AS ai_hits,
-         countIf(actor_type = 'ai_training') AS training_hits,
-         countIf(actor_type = 'ai_search') AS search_hits,
-         countIf(actor_type = 'ai_fetcher') AS fetcher_hits,
-         uniqIf(bot_id, bot_id != '') AS bots, count() AS hits,
-         maxIf(ts, actor_type LIKE 'ai_%') AS last_ai_hit
+         countIf(actor_type LIKE 'ai_%' AND ${NOT_SPOOFED}) AS ai_hits,
+         countIf(actor_type = 'ai_training' AND ${NOT_SPOOFED}) AS training_hits,
+         countIf(actor_type = 'ai_search' AND ${NOT_SPOOFED}) AS search_hits,
+         countIf(actor_type = 'ai_fetcher' AND ${NOT_SPOOFED}) AS fetcher_hits,
+         uniqIf(bot_id, actor_type LIKE 'ai_%' AND bot_id != '' AND ${NOT_SPOOFED}) AS bots, count() AS hits,
+         maxIf(ts, actor_type LIKE 'ai_%' AND ${NOT_SPOOFED}) AS last_ai_hit
   FROM events WHERE ${WINDOW}
     AND ({q:String} = '' OR positionCaseInsensitive(path_group, {q:String}) > 0)
-  GROUP BY path_group HAVING ai_hits > 0 OR bots > 0
+  -- A page only a forgery touched has no AI attention, whatever the bot count
+  -- says. Without this, filtering the AI columns just moved the scanner rows
+  -- down the table instead of out of it.
+  GROUP BY path_group HAVING ai_hits > 0
   ORDER BY ai_hits DESC, hits DESC LIMIT {limit:UInt32}`;
 
 // Daily AI hits per page from the rollup, restricted to the top-N pages by total
 // AI hits. AI-only (actor_type LIKE 'ai_%') — the rollup also holds human/search/
 // social rows, which must not pollute an "AI hits per page" chart.
+// Reads daily_page_ai_stats, the rollup that carries verification. The original
+// daily_page_stats cannot exclude forged bots — no such column, and a
+// SummingMergeTree cannot gain one — so this chart briefly read raw events
+// instead, scanning them twice over a window of up to a year. Correct, but a
+// large install would feel it every time the Pages tab opened.
 const PAGES_DAILY_QUERY = `
   SELECT date, path_group AS page, sum(hits) AS hits
-  FROM daily_page_stats
-  WHERE site_id = {site:String} AND date >= today() - {days:UInt32} AND actor_type LIKE 'ai_%'
+  FROM daily_page_ai_stats
+  WHERE site_id = {site:String} AND date > today() - {days:UInt32}
+    AND ${NOT_SPOOFED}
     AND path_group IN (
-      SELECT path_group FROM daily_page_stats
-      WHERE site_id = {site:String} AND date >= today() - {days:UInt32} AND actor_type LIKE 'ai_%'
+      SELECT path_group FROM daily_page_ai_stats
+      WHERE site_id = {site:String} AND date > today() - {days:UInt32}
+        AND ${NOT_SPOOFED}
       GROUP BY path_group ORDER BY sum(hits) DESC LIMIT {limit:UInt32}
     )
   GROUP BY date, page
@@ -271,9 +297,9 @@ const AI_LANDING_PAGES_QUERY = `
   ORDER BY clicked DESC, training_hits + search_hits + fetch_hits DESC
   LIMIT {limit:UInt32}`;
 
-// Pages AI cites, from raw events (needs ai_referral alongside path_group, which
+// Pages AI retrieves, from raw events (needs ai_referral alongside path_group, which
 // the rollups don't keep). fetched = live per-prompt retrieval (the strongest
-// "cited right now" signal), surfaced = answer-index crawls, clicked = humans
+// strongest available "in use right now" signal), surfaced = answer-index crawls, clicked = humans
 // arriving from an assistant.
 const CITED_PAGES_QUERY = `
   SELECT path_group AS page,
@@ -331,7 +357,7 @@ const CITED_FEED_QUERY = `
   ORDER BY ts DESC LIMIT 30`;
 
 // Pages where AI bots ran into errors — a broken page that AI links to or
-// re-crawls is a lost citation. argMax(status, ts) = the most recent status.
+// re-crawls is a link an assistant may still be handing out. argMax(status, ts) = the most recent status.
 //
 // verification != 'spoofed' is load-bearing, not a nicety: a vulnerability
 // scanner that forges an AI user-agent IS classified ai_*, so without this the
@@ -495,6 +521,8 @@ export function createStatsStore(client: ChQueryClientLike): StatsStore {
   function kpisFrom(row: Record<string, string> | undefined): OverviewKpis {
     return {
       aiHits: toNum(row?.["ai_hits"]),
+      aiVerified: toNum(row?.["ai_verified"]),
+      aiUnverified: toNum(row?.["ai_unverified"]),
       uniqueBots: toNum(row?.["unique_bots"]),
       verified: toNum(row?.["verified"]),
       spoofed: toNum(row?.["spoofed"]),
@@ -539,8 +567,12 @@ export function createStatsStore(client: ChQueryClientLike): StatsStore {
         hours2: hours * 2
       }),
       rows<{ t: string; actor_type: string; c: string }>(
+        // Every series here is labelled by what the visitor CLAIMED to be, so a
+        // forged ChatGPT-User burst would draw itself as AI traffic. The KPI
+        // above the chart already excludes forgeries; the chart has to agree.
+        // Forged traffic is not lost — the Security tab is where it belongs.
         `SELECT toStartOfHour(ts) AS t, actor_type, count() AS c
-         FROM events WHERE ${WINDOW}
+         FROM events WHERE ${WINDOW} AND ${NOT_SPOOFED}
          GROUP BY t, actor_type ORDER BY t`,
         params
       ),

@@ -126,7 +126,7 @@ function TakeGive({ site, days }: { site: string; days: number }) {
   );
 }
 
-/** Pages AI actually cites — live fetches, answer-index hits and human click-throughs, from real logs. */
+/** Pages AI retrieves — live fetches, answer-index hits and human click-throughs, from real logs. */
 export function Citations({ site }: { site: string }) {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<CitationsData | null>(null);
@@ -155,7 +155,7 @@ export function Citations({ site }: { site: string }) {
     <>
       <div className="card">
         <div className="cardhead">
-          <h3>Что цитирует AI · измерено по реальному трафику</h3>
+          <h3>Что AI забирает и откуда приходят люди · по реальному трафику</h3>
           <a className="csv" href={exportDailyCsvUrl(site, days, "citations")} download>
             CSV
           </a>
@@ -174,8 +174,8 @@ export function Citations({ site }: { site: string }) {
                 <th>Page</th>
                 <th title="Live fetches by assistants answering a user (ai_fetcher)">Fetched live</th>
                 <th title="AI search indexers that surface answers (ai_search)">Surfaced</th>
-                <th title="Humans who clicked through from an AI assistant">Clicked</th>
-                <th>Last cited</th>
+                <th title="Люди, пришедшие по ссылке из ответа ассистента. Считается по Referer браузера — это единственный сигнал, что ссылку показали, и подтвердить его мы не можем">Clicked</th>
+                <th>Последнее обращение</th>
               </tr>
             </thead>
             <tbody>
@@ -191,11 +191,11 @@ export function Citations({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <div className="empty">AI пока не цитировал сайт за этот период</div>
+          <div className="empty">За этот период AI не забирал страницы и переходов не было</div>
         )}
         {data && data.infra?.length ? (
           <p className="note">
-            Не считается цитированием (служебные файлы и ассеты):{" "}
+            Не страницы, а служебные файлы и ассеты:{" "}
             {data.infra.map((row) => `${row.page} — ${String(row.hits)}`).join(", ")}
           </p>
         ) : null}

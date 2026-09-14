@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import { loadCompiledBots } from "@crawlytics/registry";
 import type { RawLogEvent } from "@crawlytics/shared";
 
+import { createAsnLookup } from "../src/pipeline/asn-lookup.js";
 import { createEnricher } from "../src/pipeline/enrich.js";
+
+/** Two ranges from the real dump, enough to prove lookup and non-overwrite. */
+const NETWORK = createAsnLookup(
+  ["8.8.8.0\t8.8.8.255\t15169\tUS\tGOOGLE", "203.0.113.0\t203.0.113.255\t64496\tDE\tEXAMPLE-HOST"].join("\n")
+);
 
 const fakeVerifier = {
   verify: (botId: string, ip: string) =>
@@ -33,6 +39,72 @@ function event(overrides: Partial<RawLogEvent>): RawLogEvent {
     ...overrides
   };
 }
+
+describe("createEnricher network enrichment", () => {
+  it("fills the network from the database when the sensor could not", async () => {
+    // A plain access log has no country/asn/asOrg — that is the whole problem.
+    const enrich = createEnricher({
+      bots: loadCompiledBots(),
+      secret: "test-secret",
+      network: NETWORK
+    });
+    const row = await enrich("site-1", event({ ip: "8.8.8.8" }));
+    expect(row).toMatchObject({ country: "US", asn: 15169, as_org: "GOOGLE" });
+  });
+
+  it("never overwrites what the sensor already reported", async () => {
+    // Cloudflare knows the address better than a dump refreshed hourly, and its
+    // answer for 203.0.113.10 differs from the database on every field.
+    const enrich = createEnricher({
+      bots: loadCompiledBots(),
+      secret: "test-secret",
+      network: NETWORK
+    });
+    const row = await enrich(
+      "site-1",
+      event({ ip: "203.0.113.10", country: "FR", asn: 3215, asOrg: "ORANGE" })
+    );
+    expect(row).toMatchObject({ country: "FR", asn: 3215, as_org: "ORANGE" });
+  });
+
+  it("fills only the fields the sensor left out", async () => {
+    const enrich = createEnricher({
+      bots: loadCompiledBots(),
+      secret: "test-secret",
+      network: NETWORK
+    });
+    const row = await enrich("site-1", event({ ip: "8.8.8.8", country: "FR" }));
+    expect(row).toMatchObject({ country: "FR", asn: 15169, as_org: "GOOGLE" });
+  });
+
+  it("treats a zero ASN from a sensor as unknown, not as an answer", async () => {
+    // 0 is the unknown sentinel everywhere else in the schema, so a sensor that
+    // reports it must not block the lookup and leave a row half-filled.
+    const enrich = createEnricher({
+      bots: loadCompiledBots(),
+      secret: "test-secret",
+      network: NETWORK
+    });
+    const row = await enrich("site-1", event({ ip: "8.8.8.8", asn: 0 }));
+    expect(row).toMatchObject({ country: "US", asn: 15169, as_org: "GOOGLE" });
+  });
+
+  it("leaves the network empty when no database is configured", async () => {
+    const enrich = createEnricher({ bots: loadCompiledBots(), secret: "test-secret" });
+    const row = await enrich("site-1", event({ ip: "8.8.8.8" }));
+    expect(row).toMatchObject({ country: "", asn: 0, as_org: "" });
+  });
+
+  it("leaves the network empty for an address nobody announces", async () => {
+    const enrich = createEnricher({
+      bots: loadCompiledBots(),
+      secret: "test-secret",
+      network: NETWORK
+    });
+    const row = await enrich("site-1", event({ ip: "192.168.1.1" }));
+    expect(row).toMatchObject({ country: "", asn: 0, as_org: "" });
+  });
+});
 
 describe("createEnricher", () => {
   it("enriches a verified bot hit and keeps the raw bot IP", async () => {

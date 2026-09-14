@@ -143,10 +143,21 @@ log "Starting the stack…"
 compose up -d
 
 log "Waiting for the app to become healthy…"
-for _ in $(seq 1 30); do
-  if compose ps app | grep -q "healthy"; then break; fi
+# Generous on purpose: the app runs database migrations before it listens, and on
+# an upgrade with a large history that is minutes, not seconds. Reporting failure
+# early invites a restart in the middle of a migration.
+APP_HEALTHY=""
+for i in $(seq 1 150); do
+  if compose ps app | grep -q "healthy"; then APP_HEALTHY=yes; break; fi
+  if [ "$i" = "15" ]; then log "Still starting — database migrations run before the app listens."; fi
   sleep 2
 done
+
+if [ -z "${APP_HEALTHY}" ]; then
+  log "The app has not reported healthy yet. It may still be migrating — check with:"
+  log "  cd ${SCRIPT_DIR} && docker compose -p ${PROJECT} -f compose.prod.yml -f compose.tls.yml logs -f app"
+  log "Do NOT restart it while migrations are running."
+fi
 
 cat <<EOF
 

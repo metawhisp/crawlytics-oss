@@ -13,6 +13,7 @@ import { createChClient, createChMigrationClient, createChSink } from "./clickho
 import { loadConfig } from "./config.js";
 import { createFileStore, createMemoryStore, seedFromEnv } from "./metadata/index.js";
 import { loadMigrations, runMigrations } from "./migrate.js";
+import { loadAsnLookup } from "./pipeline/asn-lookup.js";
 import { createEnricher } from "./pipeline/enrich.js";
 import { createStatsStore } from "./stats.js";
 
@@ -34,7 +35,26 @@ if (isMain) {
   await verifier.refresh().catch(() => undefined);
 
   const sink = createChSink(client);
-  const enrich = createEnricher({ bots, secret: config.ipHashSecret, verifier });
+
+  // Optional: fills country/ASN for sensors that cannot report them (anything
+  // reading a plain access log). Absent file = no network column, never a
+  // failed boot — a self-host that skipped the download still works.
+  const asnDbPath =
+    process.env["CRAWLYTICS_ASN_DB"] ??
+    join(dirname(fileURLToPath(import.meta.url)), "..", "data", "ip2asn.tsv.gz");
+  const network = await loadAsnLookup(asnDbPath);
+  console.log(
+    network
+      ? `ip-to-network: ${String(network.size)} ranges from ${asnDbPath}`
+      : `ip-to-network: no database at ${asnDbPath} — country/ASN stay empty for sensors that do not send them`
+  );
+
+  const enrich = createEnricher({
+    bots,
+    secret: config.ipHashSecret,
+    verifier,
+    ...(network ? { network } : {})
+  });
   const batcher = createBatcher({
     process: async (pending) => {
       const rows = await Promise.all(pending.map(({ siteId, event }) => enrich(siteId, event)));

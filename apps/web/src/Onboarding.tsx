@@ -70,7 +70,7 @@ const RULE_LABELS: Array<{ key: keyof AlertsConfig["rules"]; label: string }> = 
   { key: "spike", label: "Всплеск AI-трафика" },
   { key: "newBot", label: "Новый бот (впервые за 30д)" },
   { key: "spoof", label: "Спуфинг (бот-подделка)" },
-  { key: "brokenCitation", label: "Цитируемая страница сломалась (4xx/5xx)" }
+  { key: "brokenCitation", label: "Страница, которую забирал AI, сломалась (4xx/5xx)" }
 ];
 
 /** Webhook alerts. OFF until a URL is saved — the server never posts anywhere by default. */
@@ -212,7 +212,7 @@ function RobotsGenerator({ site }: { site: string }) {
     <div className="card">
       <div className="step"><span className="num">5</span><h3>robots.txt / llms.txt для <b>{site}</b></h3></div>
       <p className="muted">
-        Рекомендация: блокировать обучающих ботов, но пускать поисковые и цитирующие — они приводят людей.
+        Рекомендация: блокировать обучающих ботов, но пускать поисковые и те, что забирают страницу в ответ, — они приводят людей.
       </p>
       <PolicyToggle
         label="Training (GPTBot, ClaudeBot…)"
@@ -274,7 +274,7 @@ function McpSetup({ site }: { site: string }) {
     <div className="card">
       <div className="step"><span className="num">7</span><h3>MCP — спросить Claude про <b>{site}</b></h3></div>
       <p className="muted">
-        Подключите Claude к этим данным: он сам достанет цитирования, битые страницы и слепые зоны — и починит сайт.
+        Подключите Claude к этим данным: он сам достанет обращения ботов, битые страницы и слепые зоны — и починит сайт.
         Ключ даёт <b>только чтение</b> и только этого сайта; настройки и алерты через MCP менять нельзя.
       </p>
       <button className="primary" onClick={() => void mint()} disabled={busy}>
@@ -286,7 +286,7 @@ function McpSetup({ site }: { site: string }) {
       <h4>Любой MCP-клиент с поддержкой заголовков</h4>
       <CopyBlock text={genericClientConfig(endpoint, shown)} />
       <p className="muted">
-        Дальше просто спросите: «какие мои страницы цитирует ChatGPT за месяц?», «что сломано для AI-ботов?»,
+        Дальше просто спросите: «какие мои страницы ChatGPT забирал за месяц?», «что сломано для AI-ботов?»,
         «каких страниц AI вообще не видит?».
       </p>
       {err !== null ? <div className="err">{err}</div> : null}

@@ -61,7 +61,18 @@ export function createChMigrationClient(client: ClickHouseClient): MigrationClie
       return rows.map((row) => row.name);
     },
     async recordApplied(name: string): Promise<void> {
-      await client.insert({ table: "_migrations", format: "JSONEachRow", values: [{ name }] });
+      // Synchronously, overriding the shared async_insert above for this one row.
+      // Measured on ClickHouse 25.5: a row written with wait_for_async_insert=0 is
+      // not visible on the next SELECT, while the INSERT ... SELECT inside a
+      // migration is. Without this override a container killed between a
+      // migration's backfill and its bookkeeping row re-runs that backfill on the
+      // next boot — and a SummingMergeTree adds the history to itself.
+      await client.insert({
+        table: "_migrations",
+        format: "JSONEachRow",
+        values: [{ name }],
+        clickhouse_settings: { async_insert: 0 }
+      });
     }
   };
 }

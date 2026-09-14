@@ -18,6 +18,20 @@ RUN pnpm --filter @crawlytics/server deploy --legacy --prod /out
 # ship it in a distributed image. (Built separately via deploy/issuer.Dockerfile.)
 RUN rm -rf /out/dist/issuer /out/dist/stripe-webhook.*
 
+# IP -> network database (iptoasn.com, PDDL v1.0 / public domain, so it may be
+# redistributed inside this image). Without it, any install not behind an edge
+# like Cloudflare has no country/ASN at all. Shipped gzipped: 8 MB rather than
+# 45 for the same data.
+#
+# A failed download must NOT fail the build — the server treats a missing file
+# as "no network column" and runs normally. Set ASN_DB_URL="" to skip it.
+ARG ASN_DB_URL=https://iptoasn.com/data/ip2asn-combined.tsv.gz
+RUN mkdir -p /out/data && \
+    if [ -n "$ASN_DB_URL" ]; then \
+      wget -q -O /out/data/ip2asn.tsv.gz "$ASN_DB_URL" \
+        || { rm -f /out/data/ip2asn.tsv.gz; echo "WARNING: ip-to-network database not bundled"; }; \
+    fi
+
 # Variant B: the dashboard SPA ships in the full (paid) image and is omitted from
 # the headless (free OSS) image. The server already gates on whether public/ exists.
 ARG INCLUDE_DASHBOARD=1

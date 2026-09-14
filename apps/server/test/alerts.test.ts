@@ -63,10 +63,22 @@ describe("evaluateRules", () => {
     const newBot = client.captured.find((entry) => entry.query.includes("NOT IN"));
     // scalar guard: an empty-history site must not announce every bot as new
     expect(newBot?.query).toContain("prior_events");
+    // Forgeries are filtered out of the current window and ONLY the current
+    // window. Filtering the 30-day history too would announce a real bot as new
+    // every time a lagging vendor IP list caught up with it.
+    expect(newBot?.query.match(/verification != 'spoofed'/g)).toHaveLength(1);
     const broken = client.captured.find((entry) => entry.query.includes("AS errors"));
     // "previously cited fine" comes from the rollup, not a 30-day raw scan per tick
-    expect(broken?.query).toContain("daily_page_stats");
+    expect(broken?.query).toContain("daily_page_ai_stats");
     expect(broken?.query).toContain("status >= 400");
+    // Both filters are load-bearing on BOTH sides of the query, so count them
+    // rather than test for presence: with toContain, deleting the history filter
+    // still passes because the outer scan has one too.
+    // History: without verification a forged 200 counts as a retrieval, without
+    // actor_type a training crawl does. Current: without actor_type the 403 from
+    // a training bot the owner deliberately blocked raises an alert.
+    expect(broken?.query.match(/verification != 'spoofed'/g)).toHaveLength(2);
+    expect(broken?.query.match(/actor_type IN \('ai_fetcher', 'ai_search'\)/g)).toHaveLength(2);
   });
 
   it("fires new_bot per unseen bot and spoof per spoofed bot", async () => {

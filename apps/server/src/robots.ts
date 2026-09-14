@@ -83,7 +83,7 @@ export function buildRobotsTxt(bots: BotRegistryEntry[], policy: RobotsPolicy): 
     lines.push("Disallow: /", "");
   }
   if (allowed.length > 0) {
-    lines.push("# Allowed AI crawlers (search & citation bots that bring humans back)");
+    lines.push("# Allowed AI crawlers (search and live-retrieval bots — the ones that send people back)");
     for (const token of allowed) {
       lines.push(`User-agent: ${token}`);
     }

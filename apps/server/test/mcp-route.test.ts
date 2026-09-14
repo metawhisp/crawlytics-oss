@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { createMemoryStore } from "../src/metadata/memory-store.js";
 
-const KPIS = { aiHits: 1, uniqueBots: 1, verified: 1, spoofed: 0, aiReferrals: 0, botErrors: 0 };
+const KPIS = { aiHits: 1, aiVerified: 1, aiUnverified: 0, uniqueBots: 1, verified: 1, spoofed: 0, aiReferrals: 0, botErrors: 0 };
 
 function fakeStats() {
   return {

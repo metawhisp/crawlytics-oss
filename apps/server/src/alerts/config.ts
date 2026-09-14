@@ -8,7 +8,7 @@ export interface AlertRulesConfig {
   newBot: boolean;
   /** Spoofed-verification events appeared in the window. */
   spoof: boolean;
-  /** An AI bot hit >=400 on a page that previously served citations fine. */
+  /** An AI bot hit >=400 on a page real retrieval bots were fetching fine before. */
   brokenCitation: boolean;
 }
 

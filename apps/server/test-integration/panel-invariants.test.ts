@@ -64,10 +64,12 @@ describe.skipIf(!clickHouseReady())("panel invariants", () => {
       clicked: 1
     });
     // /blog/alpha also took 4 forged ai_fetcher hits. Counting them would inflate
-    // fetch to 6 and drag clicks-per-100 down to scanner noise.
+    // fetch to 6 and drag clicks-per-100 down to scanner noise. Training is 8:
+    // 3 from a verified crawler plus 5 from one nobody can verify — unverifiable
+    // is not forged, so it counts.
     expect(rows.find((row) => row.page === "/blog/alpha")).toEqual({
       page: "/blog/alpha",
-      training: 3,
+      training: 8,
       search: 4,
       fetch: 2,
       clicked: 3
@@ -135,6 +137,85 @@ describe.skipIf(!clickHouseReady())("panel invariants", () => {
     // read it. Bot rows must survive the browser filter to prove that coverage.
     expect(pages).not.toContain("/blog/alpha");
     expect(pages).not.toContain("/");
+  });
+
+  it("headline AI numbers never count forged bots", async () => {
+    if (!client) {
+      throw new Error("ClickHouse is not available");
+    }
+    const counts = await client.query({
+      query: `SELECT toString(countIf(actor_type LIKE 'ai_%')) AS all_ai,
+                     toString(countIf(actor_type LIKE 'ai_%' AND verification != 'spoofed')) AS real_ai
+              FROM events
+              WHERE site_id = {site:String} AND ts > now() - INTERVAL {hours:UInt32} HOUR`,
+      query_params: { site: IT_SITE, hours: HOURS },
+      format: "JSONEachRow"
+    });
+    const [row] = await counts.json<{ all_ai: string; real_ai: string }>();
+    const allAi = Number(row?.all_ai);
+    const realAi = Number(row?.real_ai);
+    // The fixture must actually contain forgeries, or this proves nothing.
+    expect(allAi).toBeGreaterThan(realAi);
+
+    const overview = await store().overview(IT_SITE, HOURS);
+    expect(overview.kpis.aiHits).toBe(realAi);
+  });
+
+  it("per-page AI attention never counts forged bots", async () => {
+    const pages = await store().pages(IT_SITE, HOURS, "");
+    // /blog/alpha: 3 verified training + 5 unverifiable training + 4 search
+    // + 2 fetch are real; 4 more fetches are forged and must not show up.
+    expect(pages.find((row) => row.pathGroup === "/blog/alpha")).toMatchObject({
+      aiHits: 14,
+      trainingHits: 8,
+      searchHits: 4,
+      fetcherHits: 2
+    });
+  });
+
+  it("the daily per-page chart never counts forged bots", async () => {
+    const daily = await store().pagesDaily(IT_SITE, DAYS, 30);
+    const alpha = daily.pages.find((row) => row.page === "/blog/alpha");
+    expect(alpha?.total).toBe(14);
+  });
+
+  it("the traffic chart never draws forged bots as AI", async () => {
+    const overview = await store().overview(IT_SITE, HOURS);
+    const charted = overview.timeseries.reduce(
+      (total, bucket) => total + Number(bucket["ai_fetcher"] ?? 0),
+      0
+    );
+    if (!client) {
+      throw new Error("ClickHouse is not available");
+    }
+    const result = await client.query({
+      query: `SELECT toString(countIf(verification != 'spoofed')) AS real, toString(count()) AS all_of_them
+              FROM events
+              WHERE site_id = {site:String} AND ts > now() - INTERVAL {hours:UInt32} HOUR
+                AND actor_type = 'ai_fetcher'`,
+      query_params: { site: IT_SITE, hours: HOURS },
+      format: "JSONEachRow"
+    });
+    const [row] = await result.json<{ real: string; all_of_them: string }>();
+    expect(Number(row?.all_of_them)).toBeGreaterThan(Number(row?.real));
+    expect(charted).toBe(Number(row?.real));
+  });
+
+  it("'pages by AI attention' drops pages only forgeries touched", async () => {
+    const pages = await store().pages(IT_SITE, HOURS, "");
+    // /.env is hit exclusively by a scanner wearing an AI user-agent. With the
+    // AI columns filtered it scores 0, so a panel about AI attention must not
+    // keep it alive through the bot count.
+    expect(pages.map((row) => row.pathGroup)).not.toContain("/.env");
+
+    // A page a real search engine crawled is still not AI attention.
+    expect(pages.map((row) => row.pathGroup)).not.toContain("/only-search");
+
+    // The bot count is a count of AI bots that really visited: gptbot,
+    // oai-searchbot, chatgpt-user and bytespider. The forged claude-user is a
+    // fifth identity on the wire, and a verified googlebot is a sixth — neither
+    // belongs under a heading about AI attention.
+    expect(pages.find((row) => row.pathGroup === "/blog/alpha")?.bots).toBe(4);
   });
 
   it("keeps every page when a site's sensor never sees render assets", async () => {

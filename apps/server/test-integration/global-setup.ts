@@ -117,8 +117,18 @@ export default async function setup(project: TestProject): Promise<() => Promise
   try {
     await waitForPing(url);
 
-    // async_insert is off here (the production client sets it): tests must see
-    // their own writes on the very next SELECT.
+    // Two clients on purpose. Migrations run through the PRODUCTION setting
+    // (async_insert with wait_for_async_insert=0) so the suites exercise the
+    // configuration the real server boots with — that difference is exactly what
+    // hid a migration from being recorded durably. The fixture goes in
+    // synchronously, because tests must see their own writes on the next SELECT.
+    const migrationClient = createClient({
+      url,
+      database: DATABASE,
+      username: USER,
+      password: PASSWORD,
+      clickhouse_settings: { async_insert: 1, wait_for_async_insert: 0 }
+    });
     const client = createClient({
       url,
       database: DATABASE,
@@ -128,8 +138,9 @@ export default async function setup(project: TestProject): Promise<() => Promise
     });
 
     const migrationsDir = fileURLToPath(new URL("../migrations/", import.meta.url));
-    await runMigrations(createChMigrationClient(client), await loadMigrations(migrationsDir));
+    await runMigrations(createChMigrationClient(migrationClient), await loadMigrations(migrationsDir));
     await createChSink(client).insert(fixtureEvents());
+    await migrationClient.close();
     await client.close();
   } catch (error) {
     await teardown();

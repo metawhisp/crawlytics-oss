@@ -173,14 +173,14 @@ export const MCP_TOOLS: McpTool[] = [
   defineTool({
     name: "get_citations",
     description:
-      "Which pages AI actually cites, measured from real traffic (not simulated prompts): live on-demand fetches by assistants answering a user right now (ChatGPT-User, Claude-User, Perplexity-User), hits from AI search indexers, and the humans who clicked through from an assistant. Also returns clicks per assistant, crawl volume per vendor, and a live feed of the latest retrieval hits.",
+      "Which pages AI retrieves, measured from real traffic (not simulated prompts): live on-demand fetches by assistants answering a user right now (ChatGPT-User, Claude-User, Perplexity-User), hits from AI search indexers, and the humans who clicked through from an assistant. A retrieval is not proof of a citation — whether the answer linked to the page never reaches the server; the human click-through is the closest evidence, and it comes from the visitor browser referrer. Also returns clicks per assistant, crawl volume per vendor, and a live feed of the latest retrieval hits. The tool name is kept for compatibility.",
     fields: { days: daysArg(30), limit: limitArg(100, 50) },
     run: (ctx, args) => ctx.stats.citations(ctx.siteId, num(args, "days"), num(args, "limit"))
   }),
   defineTool({
     name: "get_crawl_health",
     description:
-      "Actionable problems: (1) broken citations — pages where AI crawlers received a 4xx/5xx, meaning a link inside an AI answer points at a broken page; (2) AI blind spots — pages humans visit but no AI crawler has fetched in the window, i.e. content invisible to AI. Use this to decide what to fix on the site.",
+      "Actionable problems: (1) broken pages — pages an AI crawler retrieved successfully before and now receives a 4xx/5xx on; (2) AI blind spots — pages humans visit but no AI crawler has fetched in the window, i.e. content invisible to AI. Use this to decide what to fix on the site.",
     fields: { days: daysArg(30), limit: limitArg(100, 50) },
     run: (ctx, args) => ctx.stats.crawlHealth(ctx.siteId, num(args, "days"), num(args, "limit"))
   }),

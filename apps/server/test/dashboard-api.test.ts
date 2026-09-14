@@ -18,7 +18,7 @@ function signLicenseKey(payload: unknown, privateKey: KeyObject): string {
   return `${payloadB64}.${sig.toString("base64url")}`;
 }
 
-const KPIS = { aiHits: 1, uniqueBots: 1, verified: 1, spoofed: 0, aiReferrals: 0, botErrors: 0 };
+const KPIS = { aiHits: 1, aiVerified: 1, aiUnverified: 0, uniqueBots: 1, verified: 1, spoofed: 0, aiReferrals: 0, botErrors: 0 };
 
 const OVERVIEW: OverviewResult = {
   kpis: KPIS,

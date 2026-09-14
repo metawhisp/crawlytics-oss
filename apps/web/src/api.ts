@@ -1,5 +1,10 @@
 export interface Kpis {
+  /** AI hits EXCLUDING forgeries — equals aiVerified + aiUnverified. */
   aiHits: number;
+  /** Checked against the vendor's published ranges or PTR records, and passed. */
+  aiVerified: number;
+  /** No published way to check, or the check could not run. Not an accusation. */
+  aiUnverified: number;
   uniqueBots: number;
   verified: number;
   spoofed: number;
@@ -216,7 +221,8 @@ export const getAiLandingPages = (site: string, days: number, limit = 50) =>
     `/api/v1/funnels?site=${encodeURIComponent(site)}&days=${days}&limit=${limit}`
   );
 
-/** A page AI actually cites — measured from real traffic, not sampled prompts. */
+/** A page AI retrieved — measured from real traffic, not sampled prompts. A retrieval
+ * is not a citation; the server never learns whether the answer linked to it. */
 export interface CitedPage {
   page: string;
   /** Live on-demand fetches by assistants answering a user right now (ai_fetcher). */
@@ -245,7 +251,7 @@ export const getCitations = (site: string, days: number, limit = 50) =>
 
 /** Actionable crawl problems, straight from logs. */
 export interface CrawlHealth {
-  /** Pages where non-spoofed AI bots hit >=400 — a citation pointing at a broken
+  /** Pages where non-spoofed AI bots hit >=400 — a page AI was retrieving that now
    * page. `everOk` false = the URL never worked, true = a live page broke. */
   broken: Array<{ page: string; aiErrors: number; sampleStatus: number; lastHit: string; everOk: boolean }>;
   /** Pages humans visit but no AI bot has crawled in the window. Scanner sessions

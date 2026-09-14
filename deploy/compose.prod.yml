@@ -35,6 +35,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      # Migrations run before the server listens, so /healthz is silent until they
+      # finish. On a large upgrade that is minutes, and without a start_period the
+      # container is reported unhealthy while it is working perfectly — which is
+      # how someone ends up restarting a migration halfway through.
+      start_period: 300s
     depends_on:
       clickhouse:
         condition: service_healthy

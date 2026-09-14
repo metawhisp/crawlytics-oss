@@ -118,6 +118,15 @@ export function fixtureEvents(): EnrichedEvent[] {
     { path: "/blog/alpha", count: 1, actorType: "human", sessionId: "930001" },
     { path: "/assets/app.css", count: 1, actorType: "human", sessionId: "930001" },
 
+    // --- A real search engine on a page AI also reads. Verified, welcome, and
+    // not AI: a column under "AI attention" that counts it is answering a
+    // different question than its heading asks.
+    { path: "/blog/alpha", count: 1, actorType: "search_engine", botId: "googlebot", operator: "google", verification: "verified" },
+
+    // --- An AI crawler whose vendor publishes no way to verify it. Not forged,
+    // not proven — the third bucket the KPI has to show separately.
+    { path: "/blog/alpha", count: 5, actorType: "ai_training", botId: "bytespider", operator: "bytedance", verification: "na" },
+
     // --- /blog/beta: a click with ZERO AI crawls. Impossible in a funnel,
     // ordinary in this data model — the row that proves the funnel is not one.
     { path: "/blog/beta", count: 1, actorType: "human", aiReferral: "perplexity", sessionId: "700002" },
@@ -137,11 +146,64 @@ export function fixtureEvents(): EnrichedEvent[] {
     // completely different fix (a redirect, not a repair).
     { path: "/blog/ghost", count: 3, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "verified" },
 
+    // --- /blog/omega: two identities nobody on this site has seen before, one
+    // forged and one real, both arriving inside the alert window. The "new bot"
+    // notice must be about the real one only — the forgery is what the spoof rule
+    // is for, and saying it twice trains the owner to ignore both.
+    // Deliberately its own page: a verified bot on /blog/alpha would move the
+    // per-page bot count that a different test pins.
+    { path: "/blog/omega", count: 2, actorType: "ai_fetcher", botId: "meta-externalagent", operator: "meta", verification: "spoofed", botIp: "198.51.100.30", minutesAgo: 5 },
+    { path: "/blog/omega", count: 1, actorType: "ai_training", botId: "applebot-extended", operator: "apple", verification: "verified", minutesAgo: 5 },
+
+    // --- /blog/phantom: the only page whose "it used to work" evidence is a
+    // forgery. A rollup without a verification column cannot tell, so the broken
+    // citation rule called this a broken citation — for a page no real AI bot
+    // ever retrieved successfully.
+    { path: "/blog/phantom", count: 3, status: 200, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "spoofed", minutesAgo: 2000 },
+    { path: "/blog/phantom", count: 2, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "verified", minutesAgo: 6 },
+
+    // --- /docs/api: the positive control. Real retrieval bot, real successes,
+    // now really broken — this is what the alert exists for, and it must survive
+    // every filter added to keep the forgeries out.
+    { path: "/docs/api", count: 2, status: 200, actorType: "ai_search", botId: "oai-searchbot", operator: "openai", verification: "verified", minutesAgo: 3000 },
+    { path: "/docs/api", count: 2, status: 404, actorType: "ai_search", botId: "oai-searchbot", operator: "openai", verification: "verified", minutesAgo: 7 },
+
+    // --- /guide/blocked: retrieval bots fetched it fine and still can. The only
+    // errors now are a training crawler hitting the 403 the owner deliberately
+    // set — the product itself recommends blocking training bots, so this must
+    // never page anyone. The alert is about links assistants hand out.
+    { path: "/guide/blocked", count: 2, status: 200, actorType: "ai_search", botId: "oai-searchbot", operator: "openai", verification: "verified", minutesAgo: 2800 },
+    { path: "/guide/blocked", count: 2, status: 403, actorType: "ai_training", botId: "gptbot", operator: "openai", verification: "verified", minutesAgo: 8 },
+
+    // --- /blog/train-only: crawled for training, never retrieved to answer
+    // anyone. Training is not citation, so a 404 here is not a broken citation.
+    // The new rollup holds every ai_* type, so dropping the actor_type filter
+    // while moving the query would quietly turn this into an alert.
+    { path: "/blog/train-only", count: 2, status: 200, actorType: "ai_training", botId: "gptbot", operator: "openai", verification: "verified", minutesAgo: 2500 },
+    { path: "/blog/train-only", count: 2, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "verified", minutesAgo: 9 },
+
     // --- Credential scan wearing an AI user-agent. Ranks ABOVE /about by error
     // count, exactly as in production, and must never be called a broken page.
     { path: "/.env", count: 6, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "spoofed", botIp: "198.51.100.10" },
     { path: "/.aws/credentials", count: 4, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "spoofed", botIp: "198.51.100.10" },
     { path: "/firebase-credentials.json", count: 3, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "spoofed", botIp: "198.51.100.10" },
+
+    // --- A forged burst inside the last hour, big enough to trip the spike
+    // alert if anything counts it as AI traffic.
+    { path: "/.env", count: 30, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "spoofed", botIp: "198.51.100.10", minutesAgo: 2 },
+
+    // --- A forgery now erroring on a page that genuinely served AI fine before.
+    // This is the only shape that can reach the broken-citation rule, so it is
+    // the only shape that proves the rule ignores forgeries.
+    { path: "/blog/alpha", count: 5, status: 404, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "spoofed", botIp: "198.51.100.10", minutesAgo: 3 },
+
+    // --- A forgery wearing an identity nobody else on this page uses, so the
+    // bot COUNT changes when forgeries are excluded (a duplicate id would not).
+    { path: "/blog/alpha", count: 2, actorType: "ai_fetcher", botId: "claude-user", operator: "anthropic", verification: "spoofed", botIp: "198.51.100.20", minutesAgo: 4 },
+
+    // --- A page only a real search engine ever touched. No AI attention at all,
+    // so a panel about AI attention must not list it.
+    { path: "/only-search", count: 3, actorType: "search_engine", botId: "googlebot", operator: "google", verification: "verified" },
 
     // --- /robots.txt: real verified AI bots really do read it. It is not a
     // citation, and it currently outranks every content page.

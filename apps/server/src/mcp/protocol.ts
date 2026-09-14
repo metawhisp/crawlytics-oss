@@ -33,8 +33,9 @@ const INSTRUCTIONS = [
   "The site is fixed by the API key used for this connection; there is no site argument.",
   "Bots are split into: ai_training (collects content to train models), ai_search (indexes",
   "content for AI answers) and ai_fetcher (retrieves a page live while answering a user —",
-  "the strongest signal that a page is being cited right now).",
-  "Start with get_overview, then get_citations for what AI cites and get_crawl_health for",
+  "the strongest available signal that a page is being used in an answer, though a log",
+  "cannot show whether the answer then linked to it).",
+  "Start with get_overview, then get_citations for what AI retrieves and get_crawl_health for",
   "what to fix. All tools are read-only; the generators return text to publish, and change",
   "nothing on the server."
 ].join(" ");
