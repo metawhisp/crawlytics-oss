@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   exportDailyCsvUrl,
@@ -8,6 +8,8 @@ import {
   type CrawlToReferRow
 } from "./api.js";
 import { fmtNum, timeAgo } from "./format.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
 
 const RANGES = [7, 30, 90];
 
@@ -66,25 +68,8 @@ function verdictFor(row: CrawlToReferRow): { cls: string; label: string } {
 }
 
 function TakeGive({ site, days }: { site: string; days: number }) {
-  const [rows, setRows] = useState<CrawlToReferRow[] | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getCrawlToRefer(site, days)
-      .then((result) => {
-        if (alive) {
-          setRows(result.rows);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setRows(null);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [site, days]);
+  const state = useRequest<{ rows: CrawlToReferRow[] }>(() => getCrawlToRefer(site, days), [site, days]);
+  const rows = state.data?.rows ?? null;
 
   return (
     <div className="card">
@@ -120,7 +105,7 @@ function TakeGive({ site, days }: { site: string; days: number }) {
           </tbody>
         </table>
       ) : (
-        <div className="empty">Нет данных по вендорам за период</div>
+        <Placeholder state={state} empty="Нет данных по вендорам за период" />
       )}
     </div>
   );
@@ -129,25 +114,9 @@ function TakeGive({ site, days }: { site: string; days: number }) {
 /** Pages AI retrieves — live fetches, answer-index hits and human click-throughs, from real logs. */
 export function Citations({ site }: { site: string }) {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<CitationsData | null>(null);
+  const state = useRequest<CitationsData>(() => getCitations(site, days, 50), [site, days]);
+  const data = state.data;
 
-  useEffect(() => {
-    let alive = true;
-    getCitations(site, days, 50)
-      .then((result) => {
-        if (alive) {
-          setData(result);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setData(null);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [site, days]);
 
   const hasPages = data !== null && data.pages.length > 0;
 
@@ -191,7 +160,7 @@ export function Citations({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <div className="empty">За этот период AI не забирал страницы и переходов не было</div>
+          <Placeholder state={state} empty="За этот период AI не забирал страницы и переходов не было" />
         )}
         {data && data.infra?.length ? (
           <p className="note">
@@ -209,7 +178,7 @@ export function Citations({ site }: { site: string }) {
           {data && data.bySource.length > 0 ? (
             <BarList rows={data.bySource.map((row) => ({ label: sourceLabel(row.source), value: row.clicks }))} />
           ) : (
-            <div className="empty">Нет переходов из AI</div>
+            <Placeholder state={state} empty="Нет переходов из AI" />
           )}
         </div>
         <div className="card">
@@ -219,7 +188,7 @@ export function Citations({ site }: { site: string }) {
           {data && data.byOperator.length > 0 ? (
             <BarList rows={data.byOperator.map((row) => ({ label: row.operator, value: row.crawls }))} />
           ) : (
-            <div className="empty">Нет AI-краулов</div>
+            <Placeholder state={state} empty="Нет AI-краулов" />
           )}
         </div>
       </div>
@@ -258,7 +227,7 @@ export function Citations({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <div className="empty">Нет свежих обращений retrieval-ботов</div>
+          <Placeholder state={state} empty="Нет свежих обращений retrieval-ботов" />
         )}
       </div>
     </>

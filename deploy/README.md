@@ -13,8 +13,8 @@ Point a domain's A record at your server, then from this `deploy/` directory:
 
 It checks Docker, asks for your domain + email, generates secrets into `.env`
 (never reuse the example values), brings the stack up, and Caddy issues a TLS
-certificate on the first request. Open `https://<your-domain>`, enter your license
-key on the unlock screen, then add a site under **Setup**.
+certificate on the first request. Open `https://<your-domain>`, sign in with the
+dashboard password the installer set, then add a site under **Setup**.
 
 Requirements: ports **80** and **443** reachable from the internet (Caddy/ACME),
 the domain resolving to this server, and Docker running.

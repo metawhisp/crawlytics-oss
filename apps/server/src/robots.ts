@@ -2,6 +2,7 @@
  * Pure functions — deterministic output, no I/O — so they are trivially testable
  * and the suggestion never depends on server state. */
 
+import { hasGenericIdentity } from "@crawlytics/registry";
 import type { BotRegistryEntry } from "@crawlytics/registry";
 
 export type BotPolicy = "allow" | "deny";
@@ -50,6 +51,12 @@ export function buildRobotsTxt(bots: BotRegistryEntry[], policy: RobotsPolicy): 
   for (const entry of bots) {
     const categoryKey = CATEGORY_KEYS[entry.actor_type];
     if (categoryKey === undefined) {
+      continue;
+    }
+    // "User-agent: Spider" is not a rule about an AI crawler; it is a rule
+    // about an English word, in a file the site owner has to defend to whoever
+    // reads it.
+    if (hasGenericIdentity(entry)) {
       continue;
     }
     const token = robotsToken(entry);

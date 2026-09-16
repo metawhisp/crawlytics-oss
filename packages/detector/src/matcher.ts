@@ -1,3 +1,4 @@
+import { hasGenericIdentity } from "@crawlytics/registry";
 import type { BotRegistryEntry } from "@crawlytics/registry";
 
 import type { Classification, Detector, DetectorOptions } from "./types.js";
@@ -120,8 +121,19 @@ export function createDetector(entries: BotRegistryEntry[], options: DetectorOpt
     // 4. Weak tokens and generic automation signals.
     const weakMatch = weakTokenRegex?.exec(ua);
     if (weakMatch?.[1]) {
-      const entry = weakTokenMap.get(weakMatch[1].toLowerCase());
+      const token = weakMatch[1].toLowerCase();
+      const entry = weakTokenMap.get(token);
       if (entry) {
+        // Which words count as generic lives in the registry package, because
+        // more than one consumer has to agree: the robots.txt generator was
+        // still publishing "User-agent: Spider" after this line was written
+        // here. Matching a word says the agent is automation; it does not say
+        // whose, and it certainly does not say AI — the headline number of this
+        // product. The short tokens here (ds9, lcc, yak, bw/, y!j) are product
+        // names and keep their type; the rule is about words, not length.
+        if (hasGenericIdentity(entry) && entry.actor_type.startsWith("ai_")) {
+          return { actorType: "other_bot" };
+        }
         return toClassification(entry);
       }
     }

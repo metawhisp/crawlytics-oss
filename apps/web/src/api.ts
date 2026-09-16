@@ -85,12 +85,6 @@ export interface Session {
   passwordRequired?: boolean;
 }
 
-export interface LicenseResult {
-  ok: boolean;
-  dashboardEnabled?: boolean;
-  error?: string;
-  note?: string;
-}
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -135,21 +129,6 @@ export async function logout(): Promise<boolean> {
   }
 }
 
-/** Submit a license key to unlock the dashboard at runtime (POST /api/license). */
-export async function submitLicense(key: string): Promise<LicenseResult> {
-  const response = await fetch("/api/license", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ key })
-  });
-  const body = (await response.json().catch(() => ({}))) as {
-    dashboardEnabled?: boolean;
-    error?: string;
-    note?: string;
-  };
-  return { ok: response.ok, ...body };
-}
-
 export interface Site {
   id: string;
   domain: string;
@@ -179,7 +158,8 @@ export const getSiteStatus = (siteId: string) =>
 const qs = (site: string, hours: number) => `site=${encodeURIComponent(site)}&hours=${hours}`;
 
 export const getOverview = (site: string, hours: number) => getJson<Overview>(`/api/v1/overview?${qs(site, hours)}`);
-export const getBots = (site: string, hours: number) => getJson<{ bots: BotRow[] }>(`/api/v1/bots?${qs(site, hours)}`);
+export const getBots = (site: string, hours: number) =>
+  getJson<{ bots: BotRow[]; truncated: boolean }>(`/api/v1/bots?${qs(site, hours)}`);
 export const getBotDetail = (site: string, hours: number, botId: string) =>
   getJson<BotDetail>(`/api/v1/bot/${encodeURIComponent(botId)}?${qs(site, hours)}`);
 export const getPages = (site: string, hours: number, q: string) =>

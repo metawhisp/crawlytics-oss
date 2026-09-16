@@ -69,7 +69,7 @@ describe("report", () => {
     const fetchMock = vi.fn(() => Promise.resolve(new Response("{}", { status: 202 })));
     vi.stubGlobal("fetch", fetchMock);
 
-    await report(makeRequest(), new Response("ok"), 1000, ENV);
+    await report(buildEvent(makeRequest(), new Response("ok"), 1000, 1030), ENV);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -82,7 +82,9 @@ describe("report", () => {
 
   it("never throws, even when ingest is down (fail-open)", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("tunnel down"))));
-    await expect(report(makeRequest(), new Response("ok"), 1000, ENV)).resolves.toBeUndefined();
+    await expect(
+      report(buildEvent(makeRequest(), new Response("ok"), 1000, 1030), ENV)
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -103,6 +105,42 @@ describe("worker.fetch", () => {
     await Promise.all(waited);
     // first call = origin passthrough, second = ingest report
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never clones the response it hands back", async () => {
+    // report() only ever read status and content-length, but it was handed
+    // response.clone() — a second branch of the body stream that nobody read
+    // and nobody cancelled. On a large or streaming response that copy simply
+    // accumulates, in a sensor sitting on the hot path of someone's site.
+    const origin = new Response("origin-body", { status: 200 });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(origin)));
+    const cloneSpy = vi.spyOn(Response.prototype, "clone");
+
+    const waited: Promise<unknown>[] = [];
+    await worker.fetch(makeRequest(), ENV, { waitUntil: (p: Promise<unknown>) => waited.push(p) });
+    await Promise.all(waited);
+
+    expect(cloneSpy).not.toHaveBeenCalled();
+    cloneSpy.mockRestore();
+  });
+
+  it("still answers when cloning would have thrown", async () => {
+    // The stronger form of the same check: a response whose clone() is not
+    // usable must not stop the site being served.
+    const origin = new Response("origin-body", { status: 200 });
+    Object.defineProperty(origin, "clone", {
+      value: () => {
+        throw new Error("clone must not be called");
+      }
+    });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(origin)));
+
+    const waited: Promise<unknown>[] = [];
+    const response = await worker.fetch(makeRequest(), ENV, {
+      waitUntil: (p: Promise<unknown>) => waited.push(p)
+    });
+    await Promise.all(waited);
+    expect(await response.text()).toBe("origin-body");
   });
 
   it("skips reporting its own ingest calls if misconfigured on the same host", async () => {

@@ -33,6 +33,12 @@ export interface TopBotRow {
   lastSeen: string;
 }
 
+export interface TopBotsResult {
+  rows: TopBotRow[];
+  /** True when the site has more bots than the ranking returned. */
+  truncated: boolean;
+}
+
 export interface TopPageRow {
   pathGroup: string;
   aiHits: number;
@@ -173,7 +179,7 @@ export interface CrawlToReferRow {
 
 export interface StatsStore {
   overview(site: string, hours: number): Promise<OverviewResult>;
-  bots(site: string, hours: number): Promise<TopBotRow[]>;
+  bots(site: string, hours: number): Promise<TopBotsResult>;
   botDetail(site: string, hours: number, botId: string): Promise<BotDetailResult>;
   pages(site: string, hours: number, search: string): Promise<TopPageRow[]>;
   security(site: string, hours: number): Promise<SecurityResult>;
@@ -229,6 +235,9 @@ const KPI_SELECT = `
   countIf(verification = 'spoofed') AS spoofed,
   countIf(ai_referral != '') AS ai_referrals,
   countIf(actor_type != 'human' AND status >= 400 AND ${NOT_SPOOFED}) AS bot_errors`;
+
+/** Ranked by hits; the UI and the MCP tool both say so now. */
+const BOTS_LIMIT = 100;
 
 const BOTS_QUERY = `
   SELECT bot_id, any(operator) AS operator, any(actor_type) AS actor_type,
@@ -368,6 +377,15 @@ const CITED_FEED_QUERY = `
 // ever_ok answers "did this path ever work *for AI* in the window": false means
 // AI is chasing a URL that never existed (fix with a redirect), true means a
 // live page broke (fix the page).
+//
+// 401 and 403 are excluded, and the same exclusion is in the alert rule
+// (alerts/rules.ts) because it is the same judgement: a refusal the owner
+// configured is not a broken page. This product's own advice is to block
+// training bots in robots.txt. Sorted by error count, those blocks used to head
+// this list and push real 404s and 500s past the limit. The narrower fix —
+// copying the alert's actor_type filter — was measured against the integration
+// fixture and would also have hidden /about: five real 404s found by a training
+// crawler on a page that had been working.
 const BROKEN_CITATIONS_QUERY = `
   SELECT path_group AS page,
          countIf(status >= 400) AS ai_errors,
@@ -378,6 +396,7 @@ const BROKEN_CITATIONS_QUERY = `
   WHERE site_id = {site:String} AND ts >= now() - INTERVAL {days:UInt32} DAY
     AND actor_type LIKE 'ai_%'
     AND verification != 'spoofed'
+    AND status NOT IN (401, 403)
   GROUP BY path_group
   HAVING ai_errors > 0
   ORDER BY ai_errors DESC
@@ -624,8 +643,18 @@ export function createStatsStore(client: ChQueryClientLike): StatsStore {
     };
   }
 
-  async function bots(site: string, hours: number): Promise<TopBotRow[]> {
-    return mapBots(await rows(BOTS_QUERY, { site, hours, limit: 100 }));
+  /** The dashboard heads this "All bots" and the MCP tool used to describe it as
+   * "every bot seen in the window", over an ORDER BY hits DESC LIMIT. A site
+   * with more bots than the cap got a truncated ranking presented as the whole
+   * truth. One extra row is asked for, and never returned: its presence is the
+   * answer to "is there more". */
+  async function bots(site: string, hours: number): Promise<TopBotsResult> {
+    const fetched = await rows<Record<string, string>>(BOTS_QUERY, {
+      site,
+      hours,
+      limit: BOTS_LIMIT + 1
+    });
+    return { rows: mapBots(fetched.slice(0, BOTS_LIMIT)), truncated: fetched.length > BOTS_LIMIT };
   }
 
   async function botDetail(site: string, hours: number, botId: string): Promise<BotDetailResult> {

@@ -180,7 +180,7 @@ export const MCP_TOOLS: McpTool[] = [
   defineTool({
     name: "get_crawl_health",
     description:
-      "Actionable problems: (1) broken pages — pages an AI crawler retrieved successfully before and now receives a 4xx/5xx on; (2) AI blind spots — pages humans visit but no AI crawler has fetched in the window, i.e. content invisible to AI. Use this to decide what to fix on the site.",
+      "Actionable problems: (1) broken pages — pages AI crawlers hit errors on, excluding 401 and 403, which are a refusal someone configured rather than a page that broke (so this does NOT answer \"is anything blocking AI bots\"); (2) AI blind spots — pages humans visit but no AI crawler has fetched in the window, i.e. content invisible to AI. Use this to decide what to fix on the site.",
     fields: { days: daysArg(30), limit: limitArg(100, 50) },
     run: (ctx, args) => ctx.stats.crawlHealth(ctx.siteId, num(args, "days"), num(args, "limit"))
   }),
@@ -210,9 +210,12 @@ export const MCP_TOOLS: McpTool[] = [
   defineTool({
     name: "get_top_bots",
     description:
-      "Every bot seen in the window with hit counts, distinct pages, spoofed-request count, error count and last-seen time. Covers AI crawlers as well as search engines, SEO tools and other automation.",
+      "The 100 busiest bots in the window, ranked by hits, with distinct pages, spoofed-request count, error count and last-seen time. Covers AI crawlers as well as search engines, SEO tools and other automation. `truncated` is true when the site has more bots than that, so do NOT answer \"these are all the bots\" when it is.",
     fields: { hours: hoursArg(24) },
-    run: async (ctx, args) => ({ bots: await ctx.stats.bots(ctx.siteId, num(args, "hours")) })
+    run: async (ctx, args) => {
+      const top = await ctx.stats.bots(ctx.siteId, num(args, "hours"));
+      return { bots: top.rows, truncated: top.truncated };
+    }
   }),
   defineTool({
     name: "get_bot_detail",

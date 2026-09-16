@@ -79,6 +79,10 @@ describe("evaluateRules", () => {
     // a training bot the owner deliberately blocked raises an alert.
     expect(broken?.query.match(/verification != 'spoofed'/g)).toHaveLength(2);
     expect(broken?.query.match(/actor_type IN \('ai_fetcher', 'ai_search'\)/g)).toHaveLength(2);
+    // actor_type cannot see a deliberate block: a fetcher the owner closed in
+    // robots.txt is still a retrieval bot, and the 403 it meets used to page
+    // the owner about a door they shut themselves.
+    expect(broken?.query).toContain("status NOT IN (401, 403)");
   });
 
   it("fires new_bot per unseen bot and spoof per spoofed bot", async () => {

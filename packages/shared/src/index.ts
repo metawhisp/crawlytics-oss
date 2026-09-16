@@ -25,6 +25,13 @@ export const ingestBatchSchema = z.object({
   events: z.array(rawLogEventSchema).min(1).max(5000)
 });
 
+/** The envelope only: how many events there are, not whether each one reads.
+ * The server checks them one at a time so that a single unreadable line costs
+ * one event instead of the batch it arrived in. */
+export const ingestEnvelopeSchema = z.object({
+  events: z.array(z.unknown()).min(1).max(5000)
+});
+
 export type IngestBatch = z.infer<typeof ingestBatchSchema>;
 
 /** Fully enriched event — one row in the ClickHouse `events` table. */

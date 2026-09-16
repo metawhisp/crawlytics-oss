@@ -2,21 +2,7 @@
 
 Crawlytics is a self-hosted analytics product for inbound AI traffic. It ingests web server logs and edge or middleware events, classifies AI crawlers and AI assistant referrals, verifies known bots, and exposes multi-site dashboards.
 
-## Install
-
-Needs Docker, Docker Compose v2 and a domain whose A record points at the host.
-The installer asks for the domain, an email for certificate notices and a
-dashboard password, then brings the stack up with automatic HTTPS.
-
-```sh
-git clone https://github.com/metawhisp/crawlytics-oss.git
-cd crawlytics-oss/deploy
-./install.sh
-```
-
-Everything binds to `127.0.0.1`; the reverse proxy is the only thing listening
-publicly. See [deploy/README.md](deploy/README.md) for upgrades, backups and the
-full configuration reference.
+Source planning documents are kept in the numbered Markdown files in the repository root.
 
 ## Workspace
 
@@ -84,3 +70,13 @@ by what a log can prove, so the boundaries are stated rather than hidden.
   fallback, and a stale list is used rather than none. A lagging list can mark a
   real bot as spoofed, which keeps it out of the AI panels until the list
   catches up.
+
+## License
+
+GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+
+You may use, modify and self-host this, including commercially, and the licence
+asks you to keep the copyright notices in [NOTICE](NOTICE). The part that
+distinguishes AGPL from a permissive licence is section 13: if you run a
+modified version as a service other people reach over a network, you have to
+offer those users the source of your version.

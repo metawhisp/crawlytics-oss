@@ -26,6 +26,7 @@ describe("importLogFile", () => {
       batchesPosted: 3,
       eventsSent: 7,
       linesRead: 10,
+      rejected: 0,
       skipped: 3
     });
     expect(batches.map((batch) => batch.length)).toEqual([3, 3, 1]);

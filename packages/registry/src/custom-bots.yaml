@@ -88,6 +88,15 @@ bots:
       - meta-externalagent
       - meta-externalagent/
 
+  # Deliberately left unverifiable, and it is worth writing down why so the
+  # next person does not repeat the search. Amazon publishes addresses only as
+  # text inside a script-rendered HTML page (developer.amazon.com/amazonbot/
+  # ip-addresses/), which is not something fetchJson can read. And reverse
+  # lookups of three addresses from that very list, measured 2026-09-15, come
+  # back as ec2-*.compute-1.amazonaws.com — a suffix shared with every EC2
+  # instance on the internet, so using it would verify anyone who rents one.
+  # "na" is the honest answer here; it is not the honest answer for the three
+  # search engines above, which is why only those were changed.
   - bot_id: amazonbot
     operator: amazon
     actor_type: ai_training
@@ -202,23 +211,47 @@ bots:
     rdns_suffixes:
       - .applebot.apple.com
 
+  # Verified against the vendors' own documentation on 2026-09-15. These three
+  # sat under the heading above for a long time with no way to check them at
+  # all, so verify() answered "na" — "the vendor publishes no method" — which
+  # for Yandex and Baidu was simply untrue, and a forgery wearing their name
+  # got a green badge and never showed up in Security.
+
+  # yandex.com/support/webmaster/robot-workings/check-yandex-robots.html:
+  # "All Yandex robots have names ending in yandex.ru, yandex.net or
+  # yandex.com", plus a forward lookup that must match — which is what our
+  # FCrDNS check already does.
   - bot_id: yandexbot
     operator: yandex
     actor_type: search_engine
     ua_patterns:
       - YandexBot
+    rdns_suffixes:
+      - .yandex.ru
+      - .yandex.net
+      - .yandex.com
 
+  # help.baidu.com/question?prod_id=99&class=0&id=3001 (FAQs of Baiduspider,
+  # §5): "The hostname of Baiduspider is *.baidu.com or *.baidu.jp. Others are
+  # fake hostnames."
   - bot_id: baiduspider
     operator: baidu
     actor_type: search_engine
     ua_patterns:
       - Baiduspider
+    rdns_suffixes:
+      - .baidu.com
+      - .baidu.jp
 
+  # DuckDuckGo publishes addresses, not hostnames — its crawler runs on Azure
+  # and the PTRs are generic. The JSON is the same {prefixes:[{ipv4Prefix}]}
+  # shape as Google's and Bing's, so extractCidrs reads it unchanged.
   - bot_id: duckduckbot
     operator: duckduckgo
     actor_type: search_engine
     ua_patterns:
       - DuckDuckBot
+    ip_source: https://duckduckgo.com/duckduckbot.json
 
   # --- seo tools ---
 

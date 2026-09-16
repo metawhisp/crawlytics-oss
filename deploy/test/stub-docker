@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# A stand-in for docker, so the deploy scripts can be exercised without one.
+# Logs every invocation to $STUB_LOG and answers from $STUB_DIR:
+#   fail-<verb>     exists -> that verb exits 1
+#   out-<verb>      exists -> its contents go to stdout
+#   out-<verb>-<n>  exists -> answers the nth call of that verb instead
+#   out-local       exists -> answers any clickhouse-local invocation
+#   out-cp          exists -> `cp` to a local destination really writes it
+#   err-<verb>      exists -> its contents go to stderr
+# Everything else succeeds silently.
+printf '%s\n' "$*" >> "${STUB_LOG:?STUB_LOG is required}"
+
+verb=""
+for arg in "$@"; do
+  case "$arg" in
+    cp|stop|start|exec|up|down|ps|compose|inspect) [ -z "$verb" ] || [ "$verb" = "compose" ] && verb="$arg" ;;
+  esac
+done
+
+[ -f "${STUB_DIR}/err-${verb}" ] && cat "${STUB_DIR}/err-${verb}" >&2
+[ -f "${STUB_DIR}/fail-${verb}" ] && exit 1
+
+# `cp` with an out-cp answer actually produces the file, so a backup made here
+# can be fed to restore.sh. Only when the destination is local: a copy INTO the
+# container has nothing to create on this side.
+if [ "${verb}" = "cp" ] && [ -f "${STUB_DIR}/out-cp" ]; then
+  for last in "$@"; do :; done
+  case "${last}" in
+    app:*) ;;
+    *) cat "${STUB_DIR}/out-cp" > "${last}" ;;
+  esac
+fi
+
+# clickhouse-local answers separately: a script may run it to inspect a file it
+# just dumped, and that answer is not the same as the query's.
+case "$*" in
+  *clickhouse-local*)
+    [ -f "${STUB_DIR}/out-local" ] && { cat "${STUB_DIR}/out-local"; exit 0; }
+    ;;
+esac
+
+# out-<verb>-<n> answers the nth call of that verb, so a test can make a later
+# call return something different from an earlier one. out-<verb> is the
+# fallback for every call with no numbered answer of its own.
+count_file="${STUB_DIR}/.n-${verb}"
+n=$(( $( [ -f "${count_file}" ] && cat "${count_file}" || echo 0 ) + 1 ))
+printf '%s' "${n}" > "${count_file}"
+if [ -f "${STUB_DIR}/out-${verb}-${n}" ]; then
+  cat "${STUB_DIR}/out-${verb}-${n}"
+elif [ -f "${STUB_DIR}/out-${verb}" ]; then
+  cat "${STUB_DIR}/out-${verb}"
+fi
+exit 0

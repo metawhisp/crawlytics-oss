@@ -22,22 +22,38 @@ FILES=(-f compose.prod.yml)
 [ -f compose.tls.yml ] && FILES+=(-f compose.tls.yml)
 compose() { docker compose -p "${PROJECT}" "${FILES[@]}" "$@"; }
 
-get_env() { sed -n "s/^$1=//p" "${ENV_FILE}" | head -1; }
+# shellcheck source=deploy/common.sh
+. "${SCRIPT_DIR}/common.sh"
 CH_DB="$(get_env CLICKHOUSE_DATABASE)"; CH_DB="${CH_DB:-crawlytics}"
 CH_USER="$(get_env CLICKHOUSE_USER)"; CH_USER="${CH_USER:-crawlytics}"
 CH_PASS="$(get_env CLICKHOUSE_PASSWORD)"
 
 ch() { compose exec -T clickhouse clickhouse-client -u "${CH_USER}" --password "${CH_PASS}" -d "${CH_DB}" "$@"; }
-sha256() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
+
+META_PATH="$(metadata_path)"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="${SCRIPT_DIR}/backups/crawlytics-${TS}"
 mkdir -p "${OUT}"
+# A half-written directory must not survive to look like a usable backup.
+abort() { echo "error: $1" >&2; rm -rf "${OUT}"; exit 1; }
 
 if [ "${ONLINE}" -eq 0 ]; then
   echo "==> Stopping app for a consistent snapshot (graceful flush of buffered events)…"
   # Restart the app on ANY exit path, even if the backup fails midway.
-  trap 'compose start app >/dev/null 2>&1 || true' EXIT
+  # Restart the app on ANY exit path, even if the backup fails midway. Printing a
+  # warning is not enough: a trap that ends normally leaves the exit code alone,
+  # so automation would read success while ingest stayed down. Keep the original
+  # status if the backup already failed; otherwise turn a failed restart into one.
+  restore_app() {
+    local status=$?
+    if ! compose start app >/dev/null 2>&1; then
+      echo "WARNING: could not restart the app — ingest is still stopped" >&2
+      [ "${status}" -eq 0 ] && status=1
+    fi
+    exit "${status}"
+  }
+  trap restore_app EXIT
   compose stop app
 fi
 
@@ -46,19 +62,46 @@ fi
 # best-effort by definition.
 echo "==> Dumping events…"
 ch --query "SELECT * FROM events FORMAT Native" > "${OUT}/events.native"
-COUNT="$(ch --query "SELECT count() FROM events" | tr -d '[:space:]')"
+# Count the DUMP, not the table. restore.sh compares the rows it restored
+# against this number and exits 1 on a mismatch, so the number has to be a
+# property of the file. A second count() over events is not: with --online the
+# app keeps ingesting while the dump streams, so it describes a later moment,
+# and a backup holding every row it dumped restored to "Restore is suspect".
+# Measured on ClickHouse 25.5: clickhouse-local reads a Native dump on stdin
+# and counts it exactly. A zero-row table dumps zero bytes, from which no
+# structure can be inferred — that case is simply zero, and must not ask.
+if [ -s "${OUT}/events.native" ]; then
+  COUNT="$(compose exec -T clickhouse clickhouse-local --input-format Native \
+    --query "SELECT count() FROM table" < "${OUT}/events.native" | tr -d '[:space:]')"
+else
+  COUNT=0
+fi
 
-echo "==> Copying metadata…"
-# docker cp works on a stopped container; a fresh instance may have no file yet.
-if ! compose cp "app:/data/metadata.json" "${OUT}/metadata.json" 2>/dev/null; then
-  echo '{"sites":[],"keys":[]}' > "${OUT}/metadata.json"
+echo "==> Copying metadata (${META_PATH})…"
+# docker cp works on a stopped container. Two outcomes look alike and must not
+# be confused: an instance that has no metadata yet is fine, a copy that failed
+# is not. Writing a placeholder for both is how a backup came to report success
+# while quietly holding none of the sites, keys, license or alert settings.
+CP_ERR="$(compose cp "app:${META_PATH}" "${OUT}/metadata.json" 2>&1 >/dev/null)" && CP_OK=1 || CP_OK=0
+if [ "${CP_OK}" -eq 1 ] && [ -s "${OUT}/metadata.json" ]; then
+  META_STATE="present"
+  META_SHA="$(sha256 "${OUT}/metadata.json")"
+elif [ "${CP_OK}" -eq 0 ] && ! printf '%s' "${CP_ERR}" | grep -qiE 'no such file|not found|could not find'; then
+  abort "could not copy metadata from ${META_PATH}: ${CP_ERR:-docker cp failed}"
+else
+  # Nothing there yet — a fresh instance. Say so in the manifest instead of
+  # inventing an empty file that restore would happily put over a live one.
+  rm -f "${OUT}/metadata.json"
+  META_STATE="absent"
+  META_SHA=""
 fi
 
 SHA="$(sha256 "${OUT}/events.native")"
 cat > "${OUT}/manifest.json" <<EOF
-{ "created": "${TS}", "events": ${COUNT:-0}, "events_sha256": "${SHA}", "online": ${ONLINE} }
+{ "created": "${TS}", "events": ${COUNT:-0}, "events_sha256": "${SHA}", "online": ${ONLINE},
+  "metadata": "${META_STATE}", "metadata_path": "${META_PATH}", "metadata_sha256": "${META_SHA}" }
 EOF
 
 echo "==> Backup complete: ${OUT}"
-echo "    events: ${COUNT:-0}   sha256: ${SHA}"
+echo "    events: ${COUNT:-0}   sha256: ${SHA}   metadata: ${META_STATE}"
 echo "    restore with: ./restore.sh ${OUT}"

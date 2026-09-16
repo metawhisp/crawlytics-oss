@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createSensor, expressSensor, nextSensor } from "../src/index.js";
+import { INGEST_BATCH_MAX, createSensor, expressSensor, nextSensor } from "../src/index.js";
 import type { NextRequestLike, RawSensorEvent } from "../src/index.js";
 
 const INGEST_URL = "https://analytics.example.com/api/ingest";
@@ -350,3 +350,197 @@ function readPostedEvents(init: RequestInit): unknown[] {
 
   return parsed.events;
 }
+
+describe("createSensor backpressure", () => {
+  const event = {
+    ts: "2026-09-15T10:00:00.000Z",
+    ip: "203.0.113.10",
+    method: "GET",
+    path: "/a",
+    status: 200,
+    bytes: 0,
+    ua: "GPTBot/1.3",
+    referer: ""
+  };
+
+  it("keeps events when the server says it is full", async () => {
+    // The buffer was spliced before the POST and the response was never looked
+    // at, so 429 was indistinguishable from 202 and the chunk simply vanished —
+    // inside the host application, where nobody can see it.
+    const fetchImpl = vi.fn(() => Promise.resolve({ status: 429 }));
+    const sensor = createSensor({ url: "http://localhost:3000", key: "k", flushIntervalMs: 0, fetch: fetchImpl });
+    sensor.record(event);
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    // Still ours: the next flush retries instead of starting from nothing.
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps events when the server fails", async () => {
+    const fetchImpl = vi.fn(() => Promise.resolve({ status: 503 }));
+    const sensor = createSensor({ url: "http://localhost:3000", key: "k", flushIntervalMs: 0, fetch: fetchImpl });
+    sensor.record(event);
+    await sensor.flush();
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the chunk on a rejection the server will not take back", async () => {
+    // 401 is not backpressure: retrying a bad key forever would grow the buffer
+    // without end in someone else's process.
+    const fetchImpl = vi.fn(() => Promise.resolve({ status: 401 }));
+    const sensor = createSensor({ url: "http://localhost:3000", key: "k", flushIntervalMs: 0, fetch: fetchImpl });
+    sensor.record(event);
+    await sensor.flush();
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a response it cannot read as delivered, exactly as before", async () => {
+    // FetchLike is Promise<unknown> in the public API. An implementation that
+    // returns something else must keep working the way it always has.
+    const fetchImpl = vi.fn(() => Promise.resolve("whatever"));
+    const sensor = createSensor({ url: "http://localhost:3000", key: "k", flushIntervalMs: 0, fetch: fetchImpl });
+    sensor.record(event);
+    await sensor.flush();
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps events when the connection fails outright", async () => {
+    // A rejected fetch — DNS, connection refused, reset — is the most ordinary
+    // outage there is, and it used to empty the buffer just as thoroughly as a
+    // success did.
+    let attempts = 0;
+    const fetchImpl = vi.fn(() => {
+      attempts += 1;
+      return attempts === 1
+        ? Promise.reject(new Error("ECONNREFUSED"))
+        : Promise.resolve({ status: 202 });
+    });
+    const sensor = createSensor({ url: "http://localhost:3000", key: "k", flushIntervalMs: 0, fetch: fetchImpl });
+    sensor.record(event);
+    await sensor.flush();
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("backs off the timer instead of hammering a server that is full", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(() => Promise.resolve({ status: 429 }));
+      const sensor = createSensor({
+        url: "http://localhost:3000",
+        key: "k",
+        flushIntervalMs: 1000,
+        fetch: fetchImpl
+      });
+      sensor.record(event);
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      // Without a back-off the default one-second timer would retry every second
+      // and make the server's problem worse — a load amplifier we introduced.
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      sensor.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a flush that succeeds does not cancel a back-off another flush just set", async () => {
+    // Two flushes can overlap: record() starts one at flushSize while an
+    // explicit one is still in the air. If the slow success finishes last it
+    // used to clear the back-off the refusal had just set, and the timer went
+    // back to asking a full server every second.
+    vi.useFakeTimers();
+    try {
+      let finishFirst: ((value: { status: number }) => void) | undefined;
+      const first = new Promise<{ status: number }>((resolve) => {
+        finishFirst = resolve;
+      });
+      let call = 0;
+      const fetchImpl = vi.fn(() => {
+        call += 1;
+        return call === 1 ? first : Promise.resolve({ status: 429 });
+      });
+      const sensor = createSensor({
+        url: "http://localhost:3000",
+        key: "k",
+        flushSize: 1,
+        flushIntervalMs: 1000,
+        fetch: fetchImpl
+      });
+      sensor.record(event);
+      sensor.record(event);
+      finishFirst?.({ status: 202 });
+      await vi.advanceTimersByTimeAsync(50);
+      const afterRefusal = fetchImpl.mock.calls.length;
+
+      // The refusal must still be in force a second later.
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(fetchImpl.mock.calls.length).toBe(afterRefusal);
+
+      sensor.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("requeues exactly the chunks the server did not take", async () => {
+    // One flush can span several chunks. A refusal on the second must put back
+    // the second and nothing else: re-sending the first would duplicate it,
+    // forgetting the tail would lose it.
+    let call = 0;
+    const fetchImpl = vi.fn((_url: string, init: RequestInit) => {
+      void init;
+      call += 1;
+      return call === 1 ? Promise.resolve({ status: 202 }) : Promise.resolve({ status: 429 });
+    });
+    const sensor = createSensor({
+      url: "http://localhost:3000",
+      key: "k",
+      flushSize: 100_000,
+      flushIntervalMs: 0,
+      fetch: fetchImpl
+    });
+    for (let i = 0; i < INGEST_BATCH_MAX + 1; i += 1) {
+      sensor.record(event);
+    }
+    await sensor.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await sensor.flush();
+    const retried = fetchImpl.mock.calls[2]?.[1].body;
+    const body = JSON.parse(typeof retried === "string" ? retried : "{}") as { events: unknown[] };
+    expect(body.events).toHaveLength(1);
+  });
+
+  it("stops growing when the server stays full", async () => {
+    const fetchImpl = vi.fn((_url: string, init: RequestInit) => {
+      void init;
+      return Promise.resolve({ status: 429 });
+    });
+    const sensor = createSensor({
+      url: "http://localhost:3000",
+      key: "k",
+      flushIntervalMs: 0,
+      maxBuffer: 3,
+      fetch: fetchImpl
+    });
+    for (let i = 0; i < 10; i += 1) {
+      sensor.record(event);
+    }
+    await sensor.flush();
+    await sensor.flush();
+    // Bounded: a host application must not be made to leak memory by our sensor.
+    expect(fetchImpl.mock.calls.length).toBeGreaterThan(0);
+    const sent = fetchImpl.mock.calls[0]?.[1].body;
+    const body = JSON.parse(typeof sent === "string" ? sent : "{}") as { events: unknown[] };
+    expect(body.events.length).toBeLessThanOrEqual(3);
+  });
+});

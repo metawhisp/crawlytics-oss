@@ -1161,7 +1161,11 @@
     "ua_patterns": [
       "Baiduspider"
     ],
-    "docs_url": "http://www.baidu.jp/spider/"
+    "docs_url": "http://www.baidu.jp/spider/",
+    "rdns_suffixes": [
+      ".baidu.com",
+      ".baidu.jp"
+    ]
   },
   {
     "bot_id": "bark-rr-owler",
@@ -3686,7 +3690,8 @@
     "ua_patterns": [
       "DuckDuckBot"
     ],
-    "docs_url": "http://duckduckgo.com/duckduckbot.html"
+    "docs_url": "http://duckduckgo.com/duckduckbot.html",
+    "ip_source": "https://duckduckgo.com/duckduckbot.json"
   },
   {
     "bot_id": "duckduckgo-favicons-bot",
@@ -13499,6 +13504,11 @@
     "actor_type": "search_engine",
     "ua_patterns": [
       "YandexBot"
+    ],
+    "rdns_suffixes": [
+      ".yandex.ru",
+      ".yandex.net",
+      ".yandex.com"
     ]
   },
   {

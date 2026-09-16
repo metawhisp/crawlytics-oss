@@ -84,6 +84,10 @@ describe.skipIf(!clickHouseReady())("alert rules", () => {
     // crawler meeting the 403 the owner deliberately set. Blocking training bots
     // is what this product recommends; it must not then wake the owner up.
     expect(broken).not.toContain("/guide/blocked");
+    // The same deliberate block, met by a retrieval bot this time: the
+    // actor_type filter cannot see it, so without a status filter the alert
+    // pages the owner about a door they closed themselves.
+    expect(broken).not.toContain("/guide/fetch-blocked");
     // ...and the rule still does its job. Without this the lines above are
     // satisfied by a rule that never fires at all.
     expect(broken).toContain("/docs/api");

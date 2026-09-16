@@ -23,7 +23,11 @@ export function parseJsonl(line: string, fieldMap: Record<string, string>): RawL
     method: getMappedValue("method"),
     path: getMappedValue("path"),
     status: getMappedValue("status"),
-    bytes: getMappedValue("bytes"),
+    // A log that does not record response size is a log, not a broken one: the
+    // ingest schema defaults bytes to 0. buildRawLogEvent refuses an event
+    // without it — right for apache and nginx, where a missing size means a
+    // malformed line, and wrong here, where the field simply was not mapped.
+    bytes: fieldMap["bytes"] === undefined ? 0 : getMappedValue("bytes"),
     referer: getMappedValue("referer"),
     ua: getMappedValue("ua"),
     responseMs: parseOptionalMilliseconds(getMappedValue("responseMs"))

@@ -82,6 +82,13 @@ const SPOOF_QUERY = `
 // advice produces would otherwise page the owner about a page whose retrieval
 // bots are perfectly happy.
 //
+// 401 and 403 are not breakage: they are a door the owner closed. actor_type
+// cannot see this — a fetcher blocked in robots.txt gets a 403 and is still a
+// retrieval bot — so the status has to say it. Measured on the integration
+// fixture: without this line, blocking ChatGPT-User pages the owner about every
+// page it then asks for. The broken-pages panel (stats.ts) carries the same
+// exclusion, because it is the same judgement.
+//
 // Still a rollup, not a 30-day raw scan on every tick: hits > errors implies at
 // least one successful retrieval. The outer scan stays on error rows inside the
 // tick window only.
@@ -95,6 +102,7 @@ const BROKEN_CITATION_QUERY = `
   FROM events
   WHERE site_id = {site:String}
     AND actor_type IN ('ai_fetcher', 'ai_search') AND status >= 400
+    AND status NOT IN (401, 403)
     AND verification != 'spoofed'
     AND ts > now() - INTERVAL {win:UInt32} MINUTE
     AND path_group IN (

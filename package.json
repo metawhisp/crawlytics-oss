@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Self-hosted analytics for inbound AI traffic.",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-only",
   "packageManager": "pnpm@10.28.1",
   "engines": {
     "node": ">=22.0.0",
@@ -14,7 +14,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "registry:build": "pnpm --filter @crawlytics/registry build:registry"
+    "registry:build": "pnpm --filter @crawlytics/registry build:registry",
+    "test:deploy": "./deploy/test/backup.test.sh && ./deploy/test/restore.test.sh && ./deploy/test/roundtrip.test.sh && ./deploy/test/env-quote.test.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",

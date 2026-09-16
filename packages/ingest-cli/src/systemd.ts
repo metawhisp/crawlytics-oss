@@ -7,6 +7,7 @@ export interface RenderSystemdUnitOptions {
   key: string;
   nodePath: string;
   url: string;
+  fieldMap?: Record<string, string>;
   intervalMs?: number;
 }
 
@@ -24,6 +25,17 @@ export function renderSystemdUnit(options: RenderSystemdUnitOptions): string {
     "--file",
     options.file
   ];
+
+  if (options.fieldMap !== undefined) {
+    // Without it a jsonl unit starts a tailer that recognises nothing — and a
+    // tailer that recognises nothing still reports "active (running)".
+    execArgs.push(
+      "--field-map",
+      Object.entries(options.fieldMap)
+        .map(([key, path]) => `${key}=${path}`)
+        .join(",")
+    );
+  }
 
   if (options.intervalMs !== undefined) {
     execArgs.push("--interval", String(options.intervalMs));

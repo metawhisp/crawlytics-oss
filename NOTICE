@@ -1,3 +1,9 @@
+Crawlytics
+Copyright (C) 2026 Andrey Dyuzhov
+
+Licensed under the GNU Affero General Public License, version 3 (see LICENSE).
+The licence requires these notices to be kept in any copy or modified version.
+
 Crawlytics includes bot signature data derived from the following MIT-licensed sources:
 
 - ai-robots-txt/ai.robots.txt

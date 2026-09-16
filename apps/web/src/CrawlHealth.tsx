@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { getCrawlHealth, type CrawlHealth as CrawlHealthData } from "./api.js";
 import { fmtNum, timeAgo } from "./format.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
 
 const RANGES = [7, 30, 90];
 
@@ -9,15 +11,13 @@ const RANGES = [7, 30, 90];
  * What to actually do about the row. `everOk` only says a 2xx exists somewhere
  * in the window, not that it came first, so the LATEST status leads — and the
  * status class matters: a 500 is not "no such page", it is a server that needs
- * looking at, and a 403 is a bot being blocked, possibly on purpose.
+ * looking at. 401 and 403 no longer arrive here at all — a refusal the owner
+ * configured is not a broken page, and the query drops it (stats.ts).
  */
 function whatHappened(row: { sampleStatus: number; everOk: boolean }): string {
   const status = row.sampleStatus;
   if (status < 400) {
     return "уже отвечает";
-  }
-  if (status === 401 || status === 403) {
-    return "закрыто для бота";
   }
   if (status === 429) {
     return "упёрся в лимит";
@@ -31,25 +31,8 @@ function whatHappened(row: { sampleStatus: number; everOk: boolean }): string {
 /** Actionable crawl problems: broken pages AI keeps hitting + pages AI never sees. */
 export function CrawlHealth({ site }: { site: string }) {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<CrawlHealthData | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getCrawlHealth(site, days, 50)
-      .then((result) => {
-        if (alive) {
-          setData(result);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setData(null);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [site, days]);
+  const state = useRequest<CrawlHealthData>(() => getCrawlHealth(site, days, 50), [site, days]);
+  const data = state.data;
 
   return (
     <div className="grid2">
@@ -92,7 +75,7 @@ export function CrawlHealth({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <div className="empty">AI-боты не упирались в ошибки — отлично</div>
+          <Placeholder state={state} empty="AI-боты не упирались в ошибки — отлично" />
         )}
       </div>
 
@@ -122,9 +105,10 @@ export function CrawlHealth({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <div className="empty">
-            Нет страниц, которые видят люди, но не видел AI (нужен человеческий трафик как база)
-          </div>
+          <Placeholder
+            state={state}
+            empty="Нет страниц, которые видят люди, но не видел AI (нужен человеческий трафик как база)"
+          />
         )}
       </div>
     </div>

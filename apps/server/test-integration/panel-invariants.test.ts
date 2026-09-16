@@ -106,6 +106,22 @@ describe.skipIf(!clickHouseReady())("panel invariants", () => {
     });
   });
 
+  it("'broken pages' and the nightly alert mean the same thing by 'broken'", async () => {
+    const pages = (await store().crawlHealth(IT_SITE, DAYS, 50)).broken.map((row) => row.page);
+    // Blocking training bots is this product's own advice, and blocking a
+    // fetcher is the operator's call too. The 403 that follows either decision
+    // is the policy working. It used to head the list — sorted by error count —
+    // and push real 404s and 500s past the limit.
+    expect(pages).not.toContain("/guide/blocked");
+    expect(pages).not.toContain("/guide/fetch-blocked");
+    // What is NOT dropped: a page that genuinely broke. /about is 5 real 404s
+    // from a training crawler and nothing else — narrowing the panel by
+    // actor_type to match the alert would have hidden it, which is why the
+    // filter is on status instead.
+    expect(pages).toContain("/about");
+    expect(pages).toContain("/docs/api");
+  });
+
   it("a spoofing source is labelled with the identity it used last", async () => {
     const result = await store().security(IT_SITE, HOURS);
     const rotating = result.spoofedSources.find((row) => row.ip === "203.0.113.77");

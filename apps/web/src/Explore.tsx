@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { getExplore } from "./api.js";
 import type { ExploreRow } from "./api.js";
 import { fmtNum } from "./format.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
 
 const METRICS = [
   ["hits", "Hits"],
@@ -39,14 +41,14 @@ export function Explore({ site, hours }: { site: string; hours: number }) {
   const [view, setView] = useState<"bar" | "pie" | "table">("bar");
   const [actorType, setActorType] = useState("");
   const [verification, setVerification] = useState("");
-  const [rows, setRows] = useState<ExploreRow[]>([]);
+
   const chartRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    getExplore(site, hours, metric, dimension, { actor_type: actorType, verification })
-      .then((result) => setRows(result.rows))
-      .catch(() => setRows([]));
-  }, [site, hours, metric, dimension, actorType, verification]);
+  const state = useRequest<{ rows: ExploreRow[] }>(
+    () => getExplore(site, hours, metric, dimension, { actor_type: actorType, verification }),
+    [site, hours, metric, dimension, actorType, verification]
+  );
+  const rows = state.data?.rows ?? [];
 
   useEffect(() => {
     if (!chartRef.current || view === "table") {
@@ -101,7 +103,13 @@ export function Explore({ site, hours }: { site: string; hours: number }) {
 
   const total = rows.reduce((sum, row) => sum + row.value, 0);
 
+  // Only ever exports an answer. While a request is in flight, and after one is
+  // refused, `rows` is empty — and a file holding nothing but "key,value" reads
+  // as a truthful "nothing matched these conditions".
   function downloadCsv() {
+    if (state.status !== "ready") {
+      return;
+    }
     const csv = ["key,value", ...rows.map((row) => `"${row.key.replaceAll('"', '""')}",${row.value}`)].join("\n");
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -131,10 +139,18 @@ export function Explore({ site, hours }: { site: string; hours: number }) {
             <button key={kind} className={view === kind ? "on" : ""} onClick={() => setView(kind)}>{kind}</button>
           ))}
         </div>
-        <button className="csv" onClick={downloadCsv} style={{ background: "transparent", cursor: "pointer" }}>CSV</button>
+        <button
+          className="csv"
+          onClick={downloadCsv}
+          disabled={state.status !== "ready"}
+          title={state.status === "ready" ? undefined : "Данных ещё нет"}
+          style={{ background: "transparent", cursor: state.status === "ready" ? "pointer" : "default" }}
+        >
+          CSV
+        </button>
       </div>
 
-      {rows.length === 0 ? <div className="empty">Нет данных под эти условия</div> : null}
+      {rows.length === 0 ? <Placeholder state={state} empty="Нет данных под эти условия" /> : null}
       {view !== "table" && rows.length > 0 ? <div ref={chartRef} style={{ width: "100%", height: 360 }} /> : null}
       {view === "table" && rows.length > 0 ? (
         <table>

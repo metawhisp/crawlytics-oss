@@ -5,12 +5,13 @@ import { resolve } from "node:path";
 
 import {
   formatImportSummary,
+  importExitCode,
   importLogFile,
   type ImportLogFileOptions,
   type ImportPoster
 } from "./import.js";
 import { renderSystemdUnit, type RenderSystemdUnitOptions } from "./systemd.js";
-import { tailLogFile, type TailLogFileOptions } from "./tail.js";
+import { formatTailHeartbeat, tailLogFile, type TailLogFileOptions } from "./tail.js";
 import type { LogFormat } from "./types.js";
 
 export type { LogFormat, RawLogEvent } from "./types.js";
@@ -47,12 +48,19 @@ const USAGE =
   [
     "Usage:",
     "  crawlytics import --key <ingestKey> --url <ingestApiUrl> --format <fmt> --file <path>",
+    "",
+    "  --field-map is required for --format jsonl, and names the field holding each value:",
+    "    --field-map ts=when,ip=client.ip,method=http.method,path=http.target,status=response.status",
+    "    (dots walk into nested objects; bytes, ua, referer and responseMs may be left out,",
+    "     and an unmapped size counts as 0)",
     "  crawlytics tail --key <ingestKey> --url <ingestApiUrl> --format <fmt> --file <path> [--interval <ms>]",
     "  crawlytics systemd --key <ingestKey> --url <ingestApiUrl> --format <fmt> --file <path> [--interval <ms>]"
   ].join("\n");
 
 interface CliDependencies {
   abortSignal?: AbortSignal;
+  /** Overridden in tests; a minute is quiet enough for a journal. */
+  heartbeatMs?: number;
   cliPath?: string;
   nodePath?: string;
   stdout?: WritableLike;
@@ -72,6 +80,7 @@ type ParsedCliCommand =
   | { kind: "tail"; options: TailLogFileOptions };
 
 interface ParsedFlagValues {
+  fieldMap?: Record<string, string>;
   file: string;
   format: LogFormat;
   key: string;
@@ -102,7 +111,9 @@ export async function runCli(
 
         const summary = await importLogFile(importOptions);
         writeLine(stdout, formatImportSummary(summary));
-        return 0;
+        // A run that understood not one line is not a successful import, and it
+        // used to exit 0 with a sentence shaped exactly like a good one.
+        return importExitCode(summary);
       }
       case "tail": {
         const tailOptions: TailLogFileOptions = { ...command.options };
@@ -114,7 +125,22 @@ export async function runCli(
         }
 
         const tail = tailLogFile(tailOptions);
-        await tail.done;
+        writeLine(
+          stdout,
+          `Tailing ${command.options.file} as ${command.options.format} -> ${command.options.url}`
+        );
+        // Silence used to be this command's entire output, so a sensor that
+        // recognised nothing looked like one that was working.
+        const heartbeat = setInterval(() => {
+          writeLine(stdout, formatTailHeartbeat(tail.getSummary()));
+        }, dependencies.heartbeatMs ?? 60_000);
+        heartbeat.unref();
+        try {
+          await tail.done;
+        } finally {
+          clearInterval(heartbeat);
+        }
+        writeLine(stdout, formatTailHeartbeat(tail.getSummary()));
         return 0;
       }
       case "systemd": {
@@ -162,7 +188,7 @@ function parseSharedFlags(
   argv: readonly string[],
   allowInterval: boolean
 ): ParsedFlagValues | "help" {
-  const parsed: Partial<Record<"file" | "format" | "interval" | "key" | "url", string>> = {};
+  const parsed: Partial<Record<"fieldMap" | "file" | "format" | "interval" | "key" | "url", string>> = {};
 
   for (let index = 1; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -177,6 +203,11 @@ function parseSharedFlags(
       case "--file": {
         const value = readFlagValue(argv, index, flag);
         parsed[flag.slice(2) as "file" | "format" | "key" | "url"] = value;
+        index += 1;
+        break;
+      }
+      case "--field-map": {
+        parsed.fieldMap = readFlagValue(argv, index, flag);
         index += 1;
         break;
       }
@@ -204,6 +235,15 @@ function parseSharedFlags(
   }
 
   const values: ParsedFlagValues = { file, format: formatText, key, url };
+  if (parsed.fieldMap !== undefined) {
+    values.fieldMap = parseFieldMap(parsed.fieldMap);
+  }
+  // jsonl without a map parses nothing at all: every line returns null and the
+  // run ends with "Imported 0 events from N lines" and exit 0. The format was
+  // advertised in --help and unusable from the command line.
+  if (formatText === "jsonl" && values.fieldMap === undefined) {
+    throw new CliUsageError("--format jsonl needs --field-map to say which field holds what.\n" + USAGE);
+  }
   if (parsed.interval !== undefined) {
     values.intervalMs = parseIntervalMs(parsed.interval);
   }
@@ -211,13 +251,46 @@ function parseSharedFlags(
   return values;
 }
 
+/** "ts=when,ip=client.ip" -> { ts: "when", ip: "client.ip" }. Only the fields a
+ * raw event actually has are accepted: a typo in a key would otherwise be a map
+ * that silently maps nothing. */
+function parseFieldMap(text: string): Record<string, string> {
+  const allowed = new Set(["ts", "ip", "method", "path", "status", "bytes", "ua", "referer", "responseMs"]);
+  const map: Record<string, string> = {};
+  for (const pair of text.split(",")) {
+    const trimmed = pair.trim();
+    if (trimmed === "") {
+      continue;
+    }
+    const at = trimmed.indexOf("=");
+    const key = at === -1 ? "" : trimmed.slice(0, at).trim();
+    const path = at === -1 ? "" : trimmed.slice(at + 1).trim();
+    if (!allowed.has(key) || path === "") {
+      throw new CliUsageError(
+        `--field-map: cannot read "${trimmed}". Expected key=path, key being one of ${[...allowed].join(", ")}.`
+      );
+    }
+    map[key] = path;
+  }
+  for (const required of ["ts", "ip", "method", "path", "status"]) {
+    if (map[required] === undefined) {
+      throw new CliUsageError(`--field-map: ${required} is required.`);
+    }
+  }
+  return map;
+}
+
 function toImportOptions(flags: ParsedFlagValues): ImportLogFileOptions {
-  return {
+  const options: ImportLogFileOptions = {
     file: flags.file,
     format: flags.format,
     key: flags.key,
     url: flags.url
   };
+  if (flags.fieldMap !== undefined) {
+    options.fieldMap = flags.fieldMap;
+  }
+  return options;
 }
 
 function toTailOptions(flags: ParsedFlagValues): TailLogFileOptions {
@@ -227,6 +300,10 @@ function toTailOptions(flags: ParsedFlagValues): TailLogFileOptions {
     key: flags.key,
     url: flags.url
   };
+
+  if (flags.fieldMap !== undefined) {
+    options.fieldMap = flags.fieldMap;
+  }
 
   if (flags.intervalMs !== undefined) {
     options.pollIntervalMs = flags.intervalMs;
@@ -244,6 +321,10 @@ function toSystemdOptions(
     key: flags.key,
     url: flags.url
   };
+
+  if (flags.fieldMap !== undefined) {
+    options.fieldMap = flags.fieldMap;
+  }
 
   if (flags.intervalMs !== undefined) {
     options.intervalMs = flags.intervalMs;

@@ -19,7 +19,7 @@ function fakeStats() {
         sites: [site]
       })
     ),
-    bots: vi.fn(() => Promise.resolve([])),
+    bots: vi.fn(() => Promise.resolve({ rows: [], truncated: false })),
     botDetail: vi.fn(() => Promise.resolve({ timeseries: [], topPages: [], statuses: [], sources: [], countries: [] })),
     pages: vi.fn(() => Promise.resolve([])),
     security: vi.fn(() => Promise.resolve({ spoofedByBot: [], spoofedSources: [] })),

@@ -19,6 +19,13 @@ import { createStatsStore } from "./stats.js";
 
 export { buildApp } from "./app.js";
 export { createBatcher } from "./batcher.js";
+import type { StopReport } from "./batcher.js";
+
+/** A shutdown that left accepted events unwritten must not look like a clean one:
+ * an orchestrator that only reads the exit code would restart quietly over a hole. */
+export function shutdownExitCode(report: StopReport): number {
+  return report.undelivered > 0 ? 1 : 0;
+}
 export { createEnricher } from "./pipeline/enrich.js";
 
 const isMain = process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href;
@@ -127,9 +134,15 @@ if (isMain) {
   const shutdown = async (): Promise<void> => {
     clearInterval(alertsTimer);
     await app.close();
-    await batcher.stop();
+    // stop() makes one attempt; if the sink is down the events stay in memory
+    // and this process is about to end. Say so and leave with a non-zero code,
+    // rather than exiting 0 on top of a hole nobody will be able to explain.
+    const { undelivered } = await batcher.stop();
+    if (undelivered > 0) {
+      console.error(`shutdown: ${String(undelivered)} accepted events were never written`);
+    }
     await client.close();
-    process.exit(0);
+    process.exit(shutdownExitCode({ undelivered }));
   };
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());

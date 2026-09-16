@@ -33,7 +33,7 @@ const OVERVIEW: OverviewResult = {
 
 const FAKE_STATS = {
   overview: () => Promise.resolve(OVERVIEW),
-  bots: () => Promise.resolve([]),
+  bots: () => Promise.resolve({ rows: [], truncated: false }),
   botDetail: () => Promise.resolve({ timeseries: [], topPages: [], statuses: [], sources: [], countries: [] }),
   pages: () => Promise.resolve([]),
   security: () => Promise.resolve({ spoofedByBot: [], spoofedSources: [] }),

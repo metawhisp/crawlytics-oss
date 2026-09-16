@@ -10,7 +10,6 @@ import {
   getSession,
   login,
   logout,
-  submitLicense
 } from "./api.js";
 import { listSites } from "./api.js";
 import type { BotDetail, BotRow, Overview, PageRow, Security } from "./api.js";
@@ -22,6 +21,9 @@ import { Login } from "./Login.js";
 import { PagesTrends } from "./PagesTrends.js";
 import { Explore } from "./Explore.js";
 import { Onboarding } from "./Onboarding.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
+import type { RequestState } from "./request.js";
 import { fmtNum, timeAgo, verifiedShare } from "./format.js";
 
 const PERIODS = [
@@ -107,15 +109,12 @@ export function App() {
   const [dashEnabled, setDashEnabled] = useState<boolean | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [passwordRequired, setPasswordRequired] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(false);
-  const [licenseKey, setLicenseKey] = useState("");
-  const [licenseError, setLicenseError] = useState<string | null>(null);
-  const [licenseNote, setLicenseNote] = useState<string | null>(null);
   const [site, setSite] = useState<string>("");
   const [hours, setHours] = useState(24);
   const [tab, setTab] = useState<Tab>("Overview");
-  const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const autoRouted = useRef(false);
 
@@ -123,13 +122,17 @@ export function App() {
     () =>
       getSession()
         .then((session) => {
+          setSessionError(null);
           setDashEnabled(session.dashboardEnabled);
           setAuthed(session.dashboardEnabled ? session.authed ?? false : false);
           setPasswordRequired(session.dashboardEnabled ? session.passwordRequired ?? false : false);
         })
-        .catch(() => {
-          setDashEnabled(false);
-          setAuthed(false);
+        .catch((cause: unknown) => {
+          // A refused request is not an answer. This used to set dashEnabled to
+          // false, which renders "Enter your license key to unlock the
+          // dashboard" — so an unreachable server sent the operator hunting for
+          // a key they already had. Leave the session unknown and say so.
+          setSessionError(String(cause));
         }),
     []
   );
@@ -164,19 +167,32 @@ export function App() {
       return;
     }
 
-    getOverview(site, hours)
-      .then((overview) => {
-        setData(overview);
-        setError(null);
-      })
-      .catch((cause: unknown) => setError(String(cause)));
   }, [authed, site, hours]);
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 60_000);
-    return () => clearInterval(timer);
   }, [refresh]);
+
+  // The overview was the last panel still on hand-rolled state, and it is the
+  // largest: switching site or period left the PREVIOUS subject's KPIs, chart
+  // and tables on screen under the new label, and a refusal froze them there
+  // with the error banner stacked above. The 60s tick is a poll — the same
+  // question re-asked — so it keeps what is on screen; a site or period change
+  // is a different question and drops it.
+  const overview = useRequest<Overview | null>(
+    () => (authed === true && site !== "" ? getOverview(site, hours) : Promise.resolve(null)),
+    [authed, site, hours],
+    60_000
+  );
+
+  // The list of sites is not part of "the overview of site X", so it must not
+  // vanish from the selector while the overview of another site is in flight.
+  const [knownSites, setKnownSites] = useState<string[]>([]);
+  useEffect(() => {
+    if (overview.status === "ready" && overview.data !== null) {
+      setKnownSites(overview.data.sites);
+    }
+  }, [overview.status, overview.data]);
 
   async function submitLogin() {
     const ok = await login(password);
@@ -195,27 +211,24 @@ export function App() {
     // stale flashes on the next login.
     setAuthed(false);
     setPassword("");
-    setData(null);
+    // The overview clears itself: `authed` is one of its dependencies, so the
+    // request restarts and `started` drops the previous answer. The site list
+    // is remembered outside it and has to be cleared by hand — the next person
+    // at this browser must not be shown which sites the last one had.
+    setKnownSites([]);
     setError(null);
     setTab("Overview");
     autoRouted.current = false;
   }
 
-  async function submitLicenseKey() {
-    const result = await submitLicense(licenseKey.trim());
-    if (!result.ok) {
-      setLicenseError(result.error ?? "invalid license key");
-      setLicenseNote(null);
-      return;
-    }
-    setLicenseError(null);
-    if (result.dashboardEnabled) {
-      setLicenseKey("");
-      await loadSession(); // unlocked → flow to password login or the dashboard
-    } else {
-      // Valid key, but the gate stays closed (e.g. production needs a password).
-      setLicenseNote(result.note ?? "License accepted. Set a dashboard password to serve the dashboard.");
-    }
+  if (sessionError !== null && dashEnabled === null) {
+    return (
+      <div className="login">
+        <div className="wordmark">crawl<b>ytics</b></div>
+        <div className="err">Could not reach the server to check this session: {sessionError}</div>
+        <button onClick={() => void loadSession()}>Retry</button>
+      </div>
+    );
   }
 
   if (dashEnabled === null) {
@@ -223,24 +236,23 @@ export function App() {
   }
 
   if (!dashEnabled) {
+    // The license gate was cut for the open-source release (licensed is hard
+    // coded true), so the only way to reach this screen is a production
+    // instance with no TC_DASHBOARD_PASSWORD — a deliberate fail-closed. It
+    // used to ask for a license key that has no issuer any more, sending the
+    // operator looking for something that does not exist instead of naming the
+    // one line they have to add.
     return (
       <div className="login">
         <div className="wordmark">crawl<b>ytics</b></div>
-        <div className="login-hint">Enter your license key to unlock the dashboard.</div>
-        <input
-          type="text"
-          placeholder="Paste your license key"
-          value={licenseKey}
-          onChange={(event) => setLicenseKey(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              void submitLicenseKey();
-            }
-          }}
-        />
-        {licenseError ? <div className="err">{licenseError}</div> : null}
-        {licenseNote ? <div className="login-hint">{licenseNote}</div> : null}
-        <button onClick={() => void submitLicenseKey()}>Unlock</button>
+        <div className="login-hint">
+          This instance has no dashboard password, so the dashboard is not served.
+        </div>
+        <div className="login-hint">
+          Set <code>TC_DASHBOARD_PASSWORD</code> in <code>deploy/.env</code> and restart:
+          <br />
+          <code>docker compose -p crawlytics -f compose.prod.yml -f compose.tls.yml up -d</code>
+        </div>
       </div>
     );
   }
@@ -272,7 +284,7 @@ export function App() {
         </nav>
         <div className="side-foot">
           <select value={site} onChange={(event) => setSite(event.target.value)} aria-label="Site">
-            {(data?.sites ?? (effectiveSite ? [effectiveSite] : [])).map((name) => (
+            {(knownSites.length > 0 ? knownSites : effectiveSite ? [effectiveSite] : []).map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
@@ -299,9 +311,11 @@ export function App() {
           </div>
         </div>
 
-        {error ? <div className="card err">{error}</div> : null}
+        {error ?? (overview.status === "error" ? overview.message : null) ? (
+          <div className="card err">{error ?? overview.message}</div>
+        ) : null}
 
-      {tab === "Overview" ? <OverviewTab data={data} /> : null}
+      {tab === "Overview" ? <OverviewTab state={overview} /> : null}
       {tab === "Explore" ? <Explore site={effectiveSite} hours={hours} /> : null}
       {tab === "Bots" ? <BotsTab site={effectiveSite} hours={hours} /> : null}
       {tab === "Pages" ? <PagesTab site={effectiveSite} hours={hours} /> : null}
@@ -314,9 +328,13 @@ export function App() {
   );
 }
 
-function OverviewTab({ data }: { data: Overview | null }) {
+function OverviewTab({ state }: { state: RequestState<Overview | null> }) {
+  const data = state.data;
   const kpis = data?.kpis;
   const prev = data?.prevKpis;
+  // "0 AI hits" is a claim. Until an answer arrives, and after one is refused,
+  // there is no number to show — the placeholder below names which it is.
+  const num = (value: number | undefined) => (value === undefined ? "—" : fmtNum(value));
 
   return (
     <>
@@ -325,41 +343,41 @@ function OverviewTab({ data }: { data: Overview | null }) {
           <div className="l" title="Подделки под AI-ботов сюда не входят — они в плитке Spoofed">
             AI hits
           </div>
-          <div className="v">{fmtNum(kpis?.aiHits ?? 0)}</div>
-          <Delta now={kpis?.aiHits ?? 0} prev={prev?.aiHits ?? 0} />
+          <div className="v">{num(kpis?.aiHits)}</div>
+          {kpis && prev ? <Delta now={kpis.aiHits} prev={prev.aiHits} /> : null}
           <div className="kpi-split" title="Проверено по опубликованным вендором диапазонам или PTR · вендор не публикует способ проверки">
-            {fmtNum(kpis?.aiVerified ?? 0)} проверено · {fmtNum(kpis?.aiUnverified ?? 0)} не проверяется
+            {num(kpis?.aiVerified)} проверено · {num(kpis?.aiUnverified)} не проверяется
           </div>
         </div>
         <div className="kpi">
           <div className="l">Unique AI bots</div>
-          <div className="v">{fmtNum(kpis?.uniqueBots ?? 0)}</div>
-          <Delta now={kpis?.uniqueBots ?? 0} prev={prev?.uniqueBots ?? 0} />
+          <div className="v">{num(kpis?.uniqueBots)}</div>
+          {kpis && prev ? <Delta now={kpis.uniqueBots} prev={prev.uniqueBots} /> : null}
         </div>
         <div className="kpi good">
           <div className="l">Verified share</div>
-          <div className="v">{verifiedShare(kpis?.verified ?? 0, kpis?.spoofed ?? 0)}</div>
+          <div className="v">{kpis ? verifiedShare(kpis.verified, kpis.spoofed) : "—"}</div>
         </div>
         <div className="kpi bad">
           <div className="l">Spoofed</div>
-          <div className="v">{fmtNum(kpis?.spoofed ?? 0)}</div>
-          <Delta now={kpis?.spoofed ?? 0} prev={prev?.spoofed ?? 0} invert />
+          <div className="v">{num(kpis?.spoofed)}</div>
+          {kpis && prev ? <Delta now={kpis.spoofed} prev={prev.spoofed} invert /> : null}
         </div>
         <div className="kpi">
           <div className="l">AI referrals</div>
-          <div className="v">{fmtNum(kpis?.aiReferrals ?? 0)}</div>
-          <Delta now={kpis?.aiReferrals ?? 0} prev={prev?.aiReferrals ?? 0} />
+          <div className="v">{num(kpis?.aiReferrals)}</div>
+          {kpis && prev ? <Delta now={kpis.aiReferrals} prev={prev.aiReferrals} /> : null}
         </div>
         <div className="kpi">
           <div className="l">Bot errors 4xx/5xx</div>
-          <div className="v">{fmtNum(kpis?.botErrors ?? 0)}</div>
-          <Delta now={kpis?.botErrors ?? 0} prev={prev?.botErrors ?? 0} invert />
+          <div className="v">{num(kpis?.botErrors)}</div>
+          {kpis && prev ? <Delta now={kpis.botErrors} prev={prev.botErrors} invert /> : null}
         </div>
       </div>
 
       <div className="card">
         <h3>Bot traffic over time</h3>
-        {data && data.timeseries.length > 0 ? <Chart data={data.timeseries} /> : <div className="empty">No data yet</div>}
+        {data && data.timeseries.length > 0 ? <Chart data={data.timeseries} /> : <Placeholder state={state} empty="No data yet" />}
       </div>
 
       <div className="grid2">
@@ -385,7 +403,7 @@ function OverviewTab({ data }: { data: Overview | null }) {
                 })}
               </tbody>
             </table>
-          ) : <div className="empty">Ботов пока не было</div>}
+          ) : <Placeholder state={state} empty="Ботов пока не было" />}
         </div>
 
         <div className="card">
@@ -406,7 +424,7 @@ function OverviewTab({ data }: { data: Overview | null }) {
                 ))}
               </tbody>
             </table>
-          ) : <div className="empty">Нет данных</div>}
+          ) : <Placeholder state={state} empty="Нет данных" />}
         </div>
       </div>
 
@@ -426,7 +444,7 @@ function OverviewTab({ data }: { data: Overview | null }) {
                 );
               })}
             </div>
-          ) : <div className="empty">Переходов из AI пока нет</div>}
+          ) : <Placeholder state={state} empty="Переходов из AI пока нет" />}
         </div>
 
         <div className="card">
@@ -446,7 +464,7 @@ function OverviewTab({ data }: { data: Overview | null }) {
                 );
               })}
             </div>
-          ) : <div className="empty">Тихо…</div>}
+          ) : <Placeholder state={state} empty="Тихо…" />}
         </div>
       </div>
     </>
@@ -454,26 +472,29 @@ function OverviewTab({ data }: { data: Overview | null }) {
 }
 
 function BotsTab({ site, hours }: { site: string; hours: number }) {
-  const [bots, setBots] = useState<BotRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [detail, setDetail] = useState<BotDetail | null>(null);
-
-  useEffect(() => {
-    getBots(site, hours).then((result) => setBots(result.bots)).catch(() => setBots([]));
-  }, [site, hours]);
-
-  useEffect(() => {
-    if (!selected) {
-      setDetail(null);
-      return;
-    }
-    getBotDetail(site, hours, selected).then(setDetail).catch(() => setDetail(null));
-  }, [site, hours, selected]);
+  const botsState = useRequest<{ bots: BotRow[]; truncated: boolean }>(
+    () => getBots(site, hours),
+    [site, hours]
+  );
+  const bots = botsState.data?.bots ?? [];
+  // A bot with no name selected is not a request at all — stay in `loading`
+  // rather than inventing a rejection the server never sent.
+  const detailState = useRequest<BotDetail | null>(
+    () => (selected === null ? Promise.resolve(null) : getBotDetail(site, hours, selected)),
+    [site, hours, selected]
+  );
+  const detail = detailState.data ?? null;
 
   return (
     <>
       <div className="card">
-        <div className="cardhead"><h3>All bots</h3><CsvButton site={site} hours={hours} table="bots" /></div>
+        <div className="cardhead">
+          {/* "All bots" over a LIMIT 100 ranked by hits: a busy site was shown a
+              truncated list with nothing saying so. */}
+          <h3>{botsState.data?.truncated === true ? "Top 100 bots by hits" : "All bots"}</h3>
+          <CsvButton site={site} hours={hours} table="bots" />
+        </div>
         {bots.length > 0 ? (
           <table>
             <thead>
@@ -496,8 +517,14 @@ function BotsTab({ site, hours }: { site: string; hours: number }) {
               })}
             </tbody>
           </table>
-        ) : <div className="empty">Нет данных за период</div>}
+        ) : <Placeholder state={botsState} empty="Нет данных за период" />}
       </div>
+
+      {selected !== null && detail === null ? (
+        <div className="card">
+          <Placeholder state={detailState} empty={`Нет данных по ${selected}`} />
+        </div>
+      ) : null}
 
       {selected && detail ? (
         <>
@@ -505,7 +532,7 @@ function BotsTab({ site, hours }: { site: string; hours: number }) {
             <h3>{selected} — activity</h3>
             {detail.timeseries.length > 0 ? (
               <Chart data={detail.timeseries.map((row) => ({ t: row.t, ai_training: row.hits }))} />
-            ) : <div className="empty">Нет данных</div>}
+            ) : <Placeholder state={detailState} empty="Нет данных" />}
           </div>
           <div className="grid2">
             <div className="card">
@@ -553,15 +580,19 @@ function BotsTab({ site, hours }: { site: string; hours: number }) {
 }
 
 function PagesTab({ site, hours }: { site: string; hours: number }) {
-  const [pages, setPages] = useState<PageRow[]>([]);
   const [query, setQuery] = useState("");
-
+  // The 250 ms debounce is what the typist sees; it stays here, the request
+  // state lives in the module.
+  const [debounced, setDebounced] = useState(query);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      getPages(site, hours, query).then((result) => setPages(result.pages)).catch(() => setPages([]));
-    }, 250);
+    const timer = setTimeout(() => setDebounced(query), 250);
     return () => clearTimeout(timer);
-  }, [site, hours, query]);
+  }, [query]);
+  const pagesState = useRequest<{ pages: PageRow[] }>(
+    () => getPages(site, hours, debounced),
+    [site, hours, debounced]
+  );
+  const pages = pagesState.data?.pages ?? [];
 
   return (
     <>
@@ -592,18 +623,15 @@ function PagesTab({ site, hours }: { site: string; hours: number }) {
             ))}
           </tbody>
         </table>
-      ) : <div className="empty">Нет страниц по фильтру</div>}
+      ) : <Placeholder state={pagesState} empty="Нет страниц по фильтру" />}
       </div>
     </>
   );
 }
 
 function SecurityTab({ site, hours }: { site: string; hours: number }) {
-  const [security, setSecurity] = useState<Security | null>(null);
-
-  useEffect(() => {
-    getSecurity(site, hours).then(setSecurity).catch(() => setSecurity(null));
-  }, [site, hours]);
+  const state = useRequest<Security>(() => getSecurity(site, hours), [site, hours]);
+  const security = state.data;
 
   return (
     <>
@@ -622,7 +650,7 @@ function SecurityTab({ site, hours }: { site: string; hours: number }) {
               ))}
             </tbody>
           </table>
-        ) : <div className="empty">Спуферов за период не поймано</div>}
+        ) : <Placeholder state={state} empty="Спуферов за период не поймано" />}
       </div>
 
       <div className="card">
@@ -649,7 +677,7 @@ function SecurityTab({ site, hours }: { site: string; hours: number }) {
               ))}
             </tbody>
           </table>
-        ) : <div className="empty">Пусто</div>}
+        ) : <Placeholder state={state} empty="Пусто" />}
       </div>
     </>
   );

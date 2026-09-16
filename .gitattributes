@@ -1,0 +1,19 @@
+# Review transcripts are evidence for us and noise for everyone else: they carry
+# absolute local paths, prior prompts and tool output. They stay in the repo
+# because PROGRESS.md and the numbered plans cite them, but no archive of this
+# tree — however it is produced — should ever ship them.
+*-codex-*.log export-ignore
+*-review.log export-ignore
+
+# The numbered documents are the working history of this project: plans,
+# pricing, business model, network topology, and the names of the instances it
+# runs on. They cite each other and the transcripts above, so they stay in the
+# private repository — but 83 lines across 20 of them name clients, the
+# production hostname and the VPS address, and `git archive HEAD` is how this
+# tree becomes the public release. Measured, not assumed: extract the archive
+# and grep before changing this list.
+[0-9][0-9]-*.md export-ignore
+PROGRESS.md export-ignore
+CLAUDE.md export-ignore
+AGENTS.md export-ignore
+CODEX-TASK-2-parsers.md export-ignore

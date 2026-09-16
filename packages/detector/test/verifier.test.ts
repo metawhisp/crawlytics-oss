@@ -22,11 +22,17 @@ const ENTRIES: BotRegistryEntry[] = [
     rdns_suffixes: [".googlebot.com", ".google.com"]
   },
   {
-    bot_id: "amazonbot",
-    operator: "amazon",
+    // Synthetic on purpose. This entry exists to exercise the rDNS-only path,
+    // and it used to be called amazonbot with rdns_suffixes the shipped
+    // registry does not have — so the suite looked like it covered a real bot
+    // while the real one could not be checked at all. Reverse lookups of
+    // Amazon's own published Amazonbot addresses return ec2-* names, measured
+    // 2026-09-15, so that suffix was not merely missing, it was wrong.
+    bot_id: "rdns-only-bot",
+    operator: "example",
     actor_type: "ai_training",
-    ua_patterns: ["Amazonbot"],
-    rdns_suffixes: [".crawl.amazonbot.amazon"]
+    ua_patterns: ["RdnsOnlyBot"],
+    rdns_suffixes: [".crawl.example.test"]
   },
   {
     bot_id: "bytespider",
@@ -125,11 +131,11 @@ describe("IpVerifier: vendor IP ranges", () => {
 describe("IpVerifier: FCrDNS", () => {
   it("verifies via reverse+forward DNS", async () => {
     const resolver = fakeResolver({
-      reverse: () => Promise.resolve(["crawl-12-34-56-78.crawl.amazonbot.amazon"]),
+      reverse: () => Promise.resolve(["crawl-12-34-56-78.crawl.example.test"]),
       resolve4: () => Promise.resolve(["12.34.56.78"])
     });
     const verifier = createIpVerifier({ entries: ENTRIES, fetchJson: fakeFetch({}), resolver });
-    await expect(verifier.verify("amazonbot", "12.34.56.78")).resolves.toBe("verified");
+    await expect(verifier.verify("rdns-only-bot", "12.34.56.78")).resolves.toBe("verified");
   });
 
   it("flags PTR suffix mismatch as spoofed", async () => {
@@ -137,21 +143,21 @@ describe("IpVerifier: FCrDNS", () => {
       reverse: () => Promise.resolve(["evil.example.com"])
     });
     const verifier = createIpVerifier({ entries: ENTRIES, fetchJson: fakeFetch({}), resolver });
-    await expect(verifier.verify("amazonbot", "12.34.56.78")).resolves.toBe("spoofed");
+    await expect(verifier.verify("rdns-only-bot", "12.34.56.78")).resolves.toBe("spoofed");
   });
 
   it("flags forward-confirmation mismatch as spoofed", async () => {
     const resolver = fakeResolver({
-      reverse: () => Promise.resolve(["crawl-1.crawl.amazonbot.amazon"]),
+      reverse: () => Promise.resolve(["crawl-1.crawl.example.test"]),
       resolve4: () => Promise.resolve(["99.99.99.99"])
     });
     const verifier = createIpVerifier({ entries: ENTRIES, fetchJson: fakeFetch({}), resolver });
-    await expect(verifier.verify("amazonbot", "12.34.56.78")).resolves.toBe("spoofed");
+    await expect(verifier.verify("rdns-only-bot", "12.34.56.78")).resolves.toBe("spoofed");
   });
 
   it("flags missing PTR (NXDOMAIN) as spoofed", async () => {
     const verifier = createIpVerifier({ entries: ENTRIES, fetchJson: fakeFetch({}), resolver: fakeResolver() });
-    await expect(verifier.verify("amazonbot", "12.34.56.78")).resolves.toBe("spoofed");
+    await expect(verifier.verify("rdns-only-bot", "12.34.56.78")).resolves.toBe("spoofed");
   });
 
   it("treats transient DNS failures as unverified", async () => {
@@ -159,7 +165,7 @@ describe("IpVerifier: FCrDNS", () => {
       reverse: () => Promise.reject(dnsError("ETIMEOUT"))
     });
     const verifier = createIpVerifier({ entries: ENTRIES, fetchJson: fakeFetch({}), resolver });
-    await expect(verifier.verify("amazonbot", "12.34.56.78")).resolves.toBe("unverified");
+    await expect(verifier.verify("rdns-only-bot", "12.34.56.78")).resolves.toBe("unverified");
   });
 
   it("falls back to rDNS when the IP is outside published ranges", async () => {
@@ -177,11 +183,11 @@ describe("IpVerifier: FCrDNS", () => {
   });
 
   it("caches rDNS verdicts per IP", async () => {
-    const reverse = vi.fn(() => Promise.resolve(["crawl-1.crawl.amazonbot.amazon"]));
+    const reverse = vi.fn(() => Promise.resolve(["crawl-1.crawl.example.test"]));
     const resolver = fakeResolver({ reverse, resolve4: () => Promise.resolve(["12.34.56.78"]) });
     const verifier = createIpVerifier({ entries: ENTRIES, fetchJson: fakeFetch({}), resolver });
-    await verifier.verify("amazonbot", "12.34.56.78");
-    await verifier.verify("amazonbot", "12.34.56.78");
+    await verifier.verify("rdns-only-bot", "12.34.56.78");
+    await verifier.verify("rdns-only-bot", "12.34.56.78");
     expect(reverse).toHaveBeenCalledTimes(1);
   });
 });

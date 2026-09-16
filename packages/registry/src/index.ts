@@ -284,6 +284,36 @@ function uniqueStrings(values: string[]): string[] {
  * Loads the committed compiled registry snapshot (bots.compiled.json at the
  * package root). Works both from src/ (vitest) and dist/ (built output).
  */
+/** Ordinary English words that the upstream crawler list happens to carry as
+ * entries in their own right — "Spider" (ai_training) and "Code" (ai_fetcher),
+ * both with operator "unknown". They are not identities: matching one says the
+ * agent is automation, not whose it is, and certainly not that it is AI.
+ *
+ * This lives here because more than one consumer has to agree about it. The
+ * classifier degraded such a match to other_bot while the robots.txt generator
+ * went on publishing "User-agent: Spider" in the file this product tells a site
+ * owner to serve — one caller fixed, the other left. */
+const GENERIC_IDENTITIES = new Set([
+  "bot",
+  "spider",
+  "crawl",
+  "crawler",
+  "search",
+  "fetch",
+  "scan",
+  "archive",
+  "code",
+  "feed",
+  "java",
+  "ruby",
+  "perl"
+]);
+
+/** True when the entry's only identity is a generic word. */
+export function hasGenericIdentity(entry: BotRegistryEntry): boolean {
+  return entry.ua_patterns.some((pattern) => GENERIC_IDENTITIES.has(pattern.trim().toLowerCase()));
+}
+
 export function loadCompiledBots(): BotRegistryEntry[] {
   const url = new URL("../bots.compiled.json", import.meta.url);
   return JSON.parse(readFileSync(url, "utf8")) as BotRegistryEntry[];

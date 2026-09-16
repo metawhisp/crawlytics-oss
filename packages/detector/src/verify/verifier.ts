@@ -43,6 +43,9 @@ export interface IpVerifier {
 
 const DEFAULT_RANGES_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RDNS_TTL_MS = 60 * 60 * 1000;
+/** How long a vendor that could not be read is left alone. Short, because the
+ * bots behind it answer "na" or fall through to DNS meanwhile. */
+const FAILED_RANGES_TTL_MS = 5 * 60 * 1000;
 const RDNS_CACHE_MAX = 10_000;
 /** DNS rcodes that positively assert "this record does not exist". */
 const NEGATIVE_DNS_CODES = new Set(["ENOTFOUND", "ENODATA", "NXDOMAIN", "NOTFOUND"]);
@@ -55,12 +58,21 @@ export function createIpVerifier(options: IpVerifierOptions): IpVerifier {
   const now = options.now ?? Date.now;
 
   const entriesById = new Map(options.entries.map((entry) => [entry.bot_id, entry]));
-  const rangeCache = new Map<string, { set: RangeSet; fetchedAt: number }>();
+  // `stale` marks an entry we could not refresh: either the vendor was
+  // unreachable or its document held no readable address. It carries the last
+  // good set if there ever was one, and it expires much sooner, so a broken
+  // vendor is retried in minutes instead of being asked again by every event.
+  const rangeCache = new Map<string, { set: RangeSet | null; fetchedAt: number; stale: boolean }>();
+
+  function remember(url: string, set: RangeSet | null, stale: boolean): RangeSet | null {
+    rangeCache.set(url, { set, fetchedAt: now(), stale });
+    return set;
+  }
   const rdnsCache = new Map<string, { status: VerificationStatus; expiresAt: number }>();
 
   async function getRangeSet(url: string): Promise<RangeSet | null> {
     const cached = rangeCache.get(url);
-    if (cached && now() - cached.fetchedAt < rangesTtlMs) {
+    if (cached && now() - cached.fetchedAt < (cached.stale ? FAILED_RANGES_TTL_MS : rangesTtlMs)) {
       return cached.set;
     }
     try {
@@ -68,12 +80,26 @@ export function createIpVerifier(options: IpVerifierOptions): IpVerifier {
       const ranges = extractCidrs(doc)
         .map((cidr) => parseCidr(cidr))
         .filter((range): range is IpRange => range !== null);
-      const set = new RangeSet(ranges);
-      rangeCache.set(url, { set, fetchedAt: now() });
-      return set;
+      if (ranges.length === 0) {
+        // A document that parses but holds no address is not a list saying
+        // "this IP is not ours" — it is no list at all, and an empty RangeSet
+        // is truthy, so the caller below would read it as a definitive miss and
+        // answer "spoofed". That breaks the fail-open promise above verify()
+        // for every bot with no reverse-DNS fallback. Vendors serve error pages
+        // with status 200, change formats, and key documents by address (walk()
+        // reads values, not keys) — all of which land here.
+        //
+        // Remembered as stale rather than not remembered at all: verify() runs
+        // once per bot event, and enrichment runs a whole batch of them at
+        // once, so "ask again next time" means asking the vendor once per event
+        // for as long as the outage lasts.
+        return remember(url, cached?.set ?? null, true);
+      }
+      return remember(url, new RangeSet(ranges), false);
     } catch {
-      // stale-on-error: an expired snapshot beats no data
-      return cached?.set ?? null;
+      // stale-on-error: an expired snapshot beats no data, and the same
+      // once-per-event storm applies to a vendor that is simply unreachable.
+      return remember(url, cached?.set ?? null, true);
     }
   }
 

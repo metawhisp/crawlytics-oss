@@ -18,6 +18,11 @@ cd "${SCRIPT_DIR}"
 
 compose() { docker compose -p "${PROJECT}" -f compose.prod.yml -f compose.tls.yml "$@"; }
 
+# shellcheck source=deploy/common.sh
+# Sourced before this script defines its own get_env, which must keep winning:
+# install.sh reads .env before it exists, and common.sh's version assumes it does.
+. "${SCRIPT_DIR}/common.sh"
+
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -59,17 +64,28 @@ write_env_if_absent() {
 
   [ -r /dev/tty ] || die "First install needs an interactive terminal — run ./install.sh directly (not piped)."
   log "First install — let's configure your instance."
-  local domain email pass generated=0
+  local domain email pass pass_quoted generated=0
   read -rp "Public domain (A record points here), e.g. analytics.example.com: " domain < /dev/tty
   [ -n "${domain}" ] || die "A domain is required for automatic HTTPS."
   read -rp "Email for certificate notices [admin@${domain}]: " email < /dev/tty
   email="${email:-admin@${domain}}"
-  read -rsp "Dashboard password [Enter to generate]: " pass < /dev/tty
-  echo
-  if [ -z "${pass}" ]; then
-    pass="$(gen_secret)"
-    generated=1
-  fi
+  while :; do
+    read -rsp "Dashboard password [Enter to generate]: " pass < /dev/tty
+    echo
+    if [ -z "${pass}" ]; then
+      pass="$(gen_secret)"
+      generated=1
+      break
+    fi
+    # A single quote cannot be written into .env in a form Compose reads back
+    # unchanged, and writing something that silently means something else is
+    # how an instance ends up rejecting the password its owner typed.
+    if pass_quoted="$(env_quote "${pass}")"; then
+      break
+    fi
+    warn "A single quote (') cannot be stored in .env — please choose another password."
+  done
+  [ -n "${pass_quoted:-}" ] || pass_quoted="$(env_quote "${pass}")"
 
   umask 077
   cat > "${ENV_FILE}" <<EOF
@@ -88,7 +104,7 @@ CRAWLYTICS_METADATA_FILE=/data/metadata.json
 
 TC_INGEST_KEYS=
 TC_IP_HASH_SECRET=$(gen_secret)
-TC_DASHBOARD_PASSWORD=${pass}
+TC_DASHBOARD_PASSWORD=${pass_quoted}
 EOF
   chmod 600 "${ENV_FILE}"
   if [ "${generated}" -eq 1 ]; then
@@ -163,7 +179,7 @@ cat <<EOF
 
 $(log "Crawlytics is up.")
   Dashboard:  https://${DOMAIN}
-  Next steps: open the dashboard, enter your license key, then add a site in Setup.
+  Next steps: open the dashboard, sign in with your dashboard password, then add a site in Setup.
   Caddy issues the TLS certificate on first request — the first load may take a few seconds.
   Logs:       docker compose -p ${PROJECT} -f compose.prod.yml -f compose.tls.yml logs -f
 EOF

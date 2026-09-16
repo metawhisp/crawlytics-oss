@@ -36,13 +36,26 @@ describe("createChMigrationClient", () => {
     expect(inserts[0]?.clickhouse_settings).toMatchObject({ async_insert: 0 });
   });
 
-  it("leaves ingest asynchronous — that is what the shared setting is for", async () => {
-    // The fix above must stay a per-call override. Making the whole client
-    // synchronous would put a disk write in front of every ingested event.
+  it("waits for the ingest write to be durable before calling it done", async () => {
+    // This assertion used to require the opposite — no settings at all, so the
+    // shared setting of the day applied, which was wait_for_async_insert: 0
+    // (the factory has since been moved to 1 as well). ClickHouse then
+    // acknowledged the rows as soon as they were in RAM, a later flush error
+    // never reached the batcher, and a crash before that flush lost them. The
+    // batcher can only retry what it is told failed, so the sink has to wait.
+    // Changed deliberately: this is a decision reversed, not a test bent to fit.
     const { client, inserts } = fakeClient();
     await createChSink(client).insert([]);
     expect(inserts).toHaveLength(1);
     expect(inserts[0]?.table).toBe("events");
-    expect(inserts[0]?.clickhouse_settings).toBeUndefined();
+    expect(inserts[0]?.clickhouse_settings).toMatchObject({ wait_for_async_insert: 1 });
+  });
+
+  it("keeps batching on — waiting is not the same as writing one row at a time", async () => {
+    // async_insert stays 1: ClickHouse still groups the inserts, we simply stop
+    // being told they are done before they are.
+    const { client, inserts } = fakeClient();
+    await createChSink(client).insert([]);
+    expect(inserts[0]?.clickhouse_settings).toMatchObject({ async_insert: 1 });
   });
 });

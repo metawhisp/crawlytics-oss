@@ -103,3 +103,24 @@ describe("buildLlmsTxt", () => {
     expect(text).toContain("your-domain");
   });
 });
+
+describe("the robots.txt we hand a customer", () => {
+  it("never names a generic word as a bot", () => {
+    // The upstream crawler list carries "Spider" (ai_training) and "Code"
+    // (ai_fetcher) as entries of their own, operator "unknown". They reached
+    // the file the product tells the owner to publish on their site, as
+    // "User-agent: Spider" and "User-agent: Code" — a rule matching any crawler
+    // whose product token happens to be an English word, in a file the owner
+    // has to defend to whoever reads it.
+    const txt = buildRobotsTxt(loadCompiledBots(), { training: "deny", search: "allow", fetch: "allow" });
+    const agents = txt
+      .split("\n")
+      .filter((line) => line.startsWith("User-agent:"))
+      .map((line) => line.slice("User-agent:".length).trim().toLowerCase());
+    expect(agents).not.toContain("spider");
+    expect(agents).not.toContain("code");
+    // ...and the real ones are still there.
+    expect(agents).toContain("gptbot");
+    expect(agents).toContain("claudebot");
+  });
+});

@@ -28,8 +28,13 @@ export function createChClient(options: ClickHouseOptions): ClickHouseClient {
     username: options.username,
     password: options.password,
     clickhouse_settings: {
+      // Batch, and wait for the batch to be written. The old default here was
+      // wait_for_async_insert: 0 — fire and forget — and both writers that exist
+      // today override it per call anyway. Leaving it at 0 would mean the next
+      // writer someone adds inherits silent loss by default; the default should
+      // be the safe one, and the two deliberate exceptions stay explicit.
       async_insert: 1,
-      wait_for_async_insert: 0
+      wait_for_async_insert: 1
     }
   });
 }
@@ -37,10 +42,19 @@ export function createChClient(options: ClickHouseOptions): ClickHouseClient {
 export function createChSink(client: ClickHouseClient): EventSink {
   return {
     async insert(rows: EnrichedEvent[]): Promise<void> {
+      // Stated per call even though the factory now agrees, because this is the
+      // one path where waiting is not optional: ClickHouse used to acknowledge
+      // these rows as soon as they were in RAM, so a later flush error never
+      // reached the batcher and a crash before that flush lost them with nobody
+      // the wiser. The batcher can only retry what it is told failed.
+      //
+      // async_insert stays on: ClickHouse still groups the inserts. We only stop
+      // being told they are done before they are.
       await client.insert({
         table: "events",
         format: "JSONEachRow",
-        values: rows.map((row) => ({ ...row, ts: formatChTimestamp(row.ts) }))
+        values: rows.map((row) => ({ ...row, ts: formatChTimestamp(row.ts) })),
+        clickhouse_settings: { async_insert: 1, wait_for_async_insert: 1 }
       });
     }
   };

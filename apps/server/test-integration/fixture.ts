@@ -175,6 +175,13 @@ export function fixtureEvents(): EnrichedEvent[] {
     { path: "/guide/blocked", count: 2, status: 200, actorType: "ai_search", botId: "oai-searchbot", operator: "openai", verification: "verified", minutesAgo: 2800 },
     { path: "/guide/blocked", count: 2, status: 403, actorType: "ai_training", botId: "gptbot", operator: "openai", verification: "verified", minutesAgo: 8 },
 
+    // --- /guide/fetch-blocked: the same deliberate block, but met by a
+    // RETRIEVAL bot. The owner closed ChatGPT-User in robots.txt; the 403 that
+    // follows is the policy working, not a page breaking. Nothing in the
+    // actor_type filter can tell this apart — only the status can.
+    { path: "/guide/fetch-blocked", count: 2, status: 200, actorType: "ai_search", botId: "oai-searchbot", operator: "openai", verification: "verified", minutesAgo: 2900 },
+    { path: "/guide/fetch-blocked", count: 3, status: 403, actorType: "ai_fetcher", botId: "chatgpt-user", operator: "openai", verification: "verified", minutesAgo: 6 },
+
     // --- /blog/train-only: crawled for training, never retrieved to answer
     // anyone. Training is not citation, so a 404 here is not a broken citation.
     // The new rollup holds every ai_* type, so dropping the actor_type filter

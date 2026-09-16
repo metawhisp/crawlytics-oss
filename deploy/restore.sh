@@ -17,6 +17,14 @@ ENV_FILE="${SCRIPT_DIR}/.env"
 
 DIR="${1:?usage: ./restore.sh <backup-dir> [--force]}"
 [ -f "${DIR}/events.native" ] || { echo "error: ${DIR}/events.native not found" >&2; exit 1; }
+# The manifest is what makes a directory a backup rather than a pile of files.
+# It used to be optional, and every check below quietly turned itself off when
+# the value it needed was missing — so a half-written directory was accepted and
+# --force truncated a healthy database before anyone found out.
+[ -f "${DIR}/manifest.json" ] || {
+  echo "error: ${DIR}/manifest.json not found — refusing to restore from an incomplete backup." >&2
+  exit 1
+}
 FORCE=0
 [ "${2:-}" = "--force" ] && FORCE=1
 
@@ -25,7 +33,8 @@ FILES=(-f compose.prod.yml)
 [ -f compose.tls.yml ] && FILES+=(-f compose.tls.yml)
 compose() { docker compose -p "${PROJECT}" "${FILES[@]}" "$@"; }
 
-get_env() { sed -n "s/^$1=//p" "${ENV_FILE}" | head -1; }
+# shellcheck source=deploy/common.sh
+. "${SCRIPT_DIR}/common.sh"
 CH_DB="$(get_env CLICKHOUSE_DATABASE)"; CH_DB="${CH_DB:-crawlytics}"
 CH_USER="$(get_env CLICKHOUSE_USER)"; CH_USER="${CH_USER:-crawlytics}"
 CH_PASS="$(get_env CLICKHOUSE_PASSWORD)"
@@ -33,13 +42,51 @@ ch() { compose exec -T clickhouse clickhouse-client -u "${CH_USER}" --password "
 
 # Verify the dump against the manifest BEFORE touching any data, so a corrupt
 # backup can never truncate a good database (with --force) and load garbage.
-EXPECTED_SHA="$(sed -n 's/.*"events_sha256": *"\([a-f0-9]*\)".*/\1/p' "${DIR}/manifest.json" 2>/dev/null || true)"
-ACTUAL_SHA="$( (sha256sum "${DIR}/events.native" 2>/dev/null || shasum -a 256 "${DIR}/events.native") | cut -d' ' -f1)"
-if [ -n "${EXPECTED_SHA}" ] && [ "${EXPECTED_SHA}" != "${ACTUAL_SHA}" ]; then
+EXPECTED_SHA="$(sed -n 's/.*"events_sha256": *"\([a-f0-9]*\)".*/\1/p' "${DIR}/manifest.json" || true)"
+[ -n "${EXPECTED_SHA}" ] || {
+  echo "error: manifest has no events_sha256 — refusing to restore a backup that cannot be verified." >&2
+  exit 1
+}
+ACTUAL_SHA="$(sha256 "${DIR}/events.native")"
+if [ "${EXPECTED_SHA}" != "${ACTUAL_SHA}" ]; then
   echo "error: events.native checksum does not match the manifest — refusing to restore a corrupt backup." >&2
   exit 1
 fi
-EXPECTED="$(sed -n 's/.*"events": *\([0-9]*\).*/\1/p' "${DIR}/manifest.json" 2>/dev/null || true)"
+EXPECTED="$(sed -n 's/.*"events": *\([0-9]*\).*/\1/p' "${DIR}/manifest.json" || true)"
+[ -n "${EXPECTED}" ] || {
+  echo "error: manifest has no event count — refusing to restore a backup that cannot be verified." >&2
+  exit 1
+}
+
+# Everything about the metadata is settled here, before a single byte is touched.
+META_STATE="$(sed -n 's/.*"metadata": *"\([a-z]*\)".*/\1/p' "${DIR}/manifest.json" || true)"
+META_SHA="$(sed -n 's/.*"metadata_sha256": *"\([a-f0-9]*\)".*/\1/p' "${DIR}/manifest.json" || true)"
+
+if [ "${META_STATE}" = "present" ] && [ ! -s "${DIR}/metadata.json" ]; then
+  echo "error: the manifest says this backup captured metadata, but ${DIR}/metadata.json is missing." >&2
+  exit 1
+fi
+if [ "${META_STATE}" = "absent" ] && [ -s "${DIR}/metadata.json" ]; then
+  echo "error: the manifest says this backup captured no metadata, yet ${DIR}/metadata.json exists." >&2
+  echo "       The backup contradicts itself; restoring it could overwrite live settings." >&2
+  exit 1
+fi
+if [ -n "${META_SHA}" ] && [ -s "${DIR}/metadata.json" ] && [ "${META_SHA}" != "$(sha256 "${DIR}/metadata.json")" ]; then
+  echo "error: metadata.json does not match the checksum in the manifest — refusing to restore it." >&2
+  exit 1
+fi
+# A backup made before the manifest recorded metadata may be carrying the
+# placeholder the old backup.sh wrote whenever its copy failed. It looks like a
+# perfectly valid empty instance, and putting it back deletes every site, key,
+# license and alert setting on a live one. Nothing in such a backup can tell the
+# two apart, so it is refused rather than guessed at.
+if [ -z "${META_STATE}" ] && [ -s "${DIR}/metadata.json" ] \
+  && [ "$(tr -d ' \n\r\t' < "${DIR}/metadata.json")" = '{"sites":[],"keys":[]}' ]; then
+  echo "error: ${DIR}/metadata.json is the placeholder an older backup.sh wrote when its copy failed." >&2
+  echo "       It is indistinguishable from a real empty instance, and restoring it would erase" >&2
+  echo "       the sites, keys, license and alert settings of this one. Take a fresh backup." >&2
+  exit 1
+fi
 
 echo "==> Bringing the stack up (runs migrations / creates schema)…"
 compose up -d
@@ -55,7 +102,17 @@ done
 # Stop the app so nothing ingests while we truncate/load. The trap brings it
 # back on every exit path, including failures.
 echo "==> Stopping app during restore (no concurrent ingest)…"
-trap 'compose start app >/dev/null 2>&1 || true' EXIT
+# Same as backup.sh: a trap that ends normally leaves the exit code alone, so a
+# restore that could not bring ingest back would still report success.
+restore_app() {
+  local status=$?
+  if ! compose start app >/dev/null 2>&1; then
+    echo "WARNING: could not restart the app — ingest is still stopped" >&2
+    [ "${status}" -eq 0 ] && status=1
+  fi
+  exit "${status}"
+}
+trap restore_app EXIT
 compose stop app
 
 COUNT="$(ch --query "SELECT count() FROM events" | tr -d '[:space:]')"
@@ -79,13 +136,14 @@ fi
 echo "==> Loading events (materialized views rebuild the rollups)…"
 ch --query "INSERT INTO events FORMAT Native" < "${DIR}/events.native"
 
-echo "==> Restoring metadata…"
-if [ -f "${DIR}/metadata.json" ]; then
-  compose cp "${DIR}/metadata.json" app:/data/metadata.json
+if [ -s "${DIR}/metadata.json" ]; then
+  META_PATH="$(metadata_path)"
+  echo "==> Restoring metadata (${META_PATH})…"
+  compose cp "${DIR}/metadata.json" "app:${META_PATH}"
 fi
 
 NEW="$(ch --query "SELECT count() FROM events" | tr -d '[:space:]')"
-if [ -n "${EXPECTED}" ] && [ "${NEW}" != "${EXPECTED}" ]; then
+if [ "${NEW}" != "${EXPECTED}" ]; then
   echo "error: restored ${NEW} events but the manifest expected ${EXPECTED}. Restore is suspect." >&2
   exit 1
 fi

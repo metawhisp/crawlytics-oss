@@ -42,8 +42,14 @@ batches uploads.
 
 ### 3. Node / Express middleware — for Node apps
 
-Drop-in middleware that reports each request in the background, fail-open. Add it
-once near the top of your middleware chain.
+Drop-in middleware that reports each request in the background, fail-open: an
+error in the sensor never touches your response. Add it once near the top of your
+middleware chain.
+
+If the dashboard is full or briefly down it answers 429 or 5xx, and the middleware
+keeps those events and retries on the next flush. The buffer is bounded
+(`maxBuffer`, 10000 by default) so a long outage cannot grow inside your process;
+past that point new events are refused rather than older accepted ones discarded.
 
 ### 4. curl test event — prove the pipe in 5 seconds
 

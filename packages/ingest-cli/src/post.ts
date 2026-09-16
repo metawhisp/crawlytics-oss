@@ -18,7 +18,10 @@ export interface PostEventsOptions {
 }
 
 export interface PostEventsSummary {
+  /** Events the server said it accepted — not the number handed over. */
   sent: number;
+  /** Events the server read and refused, one at a time. */
+  rejected: number;
   requests: number;
 }
 
@@ -27,7 +30,7 @@ export async function postEvents(
   options: PostEventsOptions
 ): Promise<PostEventsSummary> {
   if (events.length === 0) {
-    return { requests: 0, sent: 0 };
+    return { rejected: 0, requests: 0, sent: 0 };
   }
 
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -37,14 +40,26 @@ export async function postEvents(
 
   const ingestUrl = buildIngestUrl(options.url);
   let requests = 0;
+  let sent = 0;
+  let rejected = 0;
 
   for (let offset = 0; offset < events.length; offset += INGEST_BATCH_MAX) {
     const chunk = events.slice(offset, offset + INGEST_BATCH_MAX);
-    await postChunk(chunk, ingestUrl, options, fetchImpl);
+    try {
+      const outcome = await postChunk(chunk, ingestUrl, options, fetchImpl);
+      sent += outcome.accepted;
+      rejected += outcome.rejected;
+    } catch (error) {
+      // How far it got, attached to whatever went wrong. A caller that keeps
+      // the events has to know which ones the server already committed:
+      // putting all of them back re-sends the accepted ones, and the events
+      // table has no unique key, so those rows simply double.
+      throw withDelivered(error, offset);
+    }
     requests += 1;
   }
 
-  return { requests, sent: events.length };
+  return { rejected, requests, sent };
 }
 
 async function postChunk(
@@ -52,7 +67,7 @@ async function postChunk(
   url: string,
   options: PostEventsOptions,
   fetchImpl: FetchLike
-): Promise<void> {
+): Promise<{ accepted: number; rejected: number }> {
   const body = JSON.stringify({ events });
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
 
@@ -77,7 +92,10 @@ async function postChunk(
     }
 
     if (response.ok) {
-      return;
+      // The server reads events one at a time, so a 202 can carry a count of
+      // the ones it refused. Reporting the batch size instead would hide every
+      // per-event drop from the import summary and the tailer's heartbeat.
+      return await readOutcome(response, events.length);
     }
 
     if (isRetryableStatus(response.status) && attempt < maxRetries) {
@@ -87,6 +105,32 @@ async function postChunk(
 
     throw await buildHttpError(response);
   }
+
+  // The loop either returns or throws; this is unreachable and only here
+  // because the compiler cannot see that.
+  throw new Error("Ingest POST retry loop ended without a result");
+}
+
+async function readOutcome(
+  response: Response,
+  handed: number
+): Promise<{ accepted: number; rejected: number }> {
+  try {
+    const body: unknown = await response.json();
+    if (typeof body === "object" && body !== null && "accepted" in body) {
+      const { accepted, rejected } = body as { accepted: unknown; rejected?: unknown };
+      if (typeof accepted === "number") {
+        return {
+          accepted,
+          rejected: typeof rejected === "number" ? rejected : Math.max(0, handed - accepted)
+        };
+      }
+    }
+  } catch {
+    // 204, an empty body, or anything not JSON: an older server that does not
+    // report this. Everything handed over counts as accepted, as it did then.
+  }
+  return { accepted: handed, rejected: 0 };
 }
 
 function buildIngestUrl(url: string): string {
@@ -135,12 +179,41 @@ function parseRetryAfterMs(value: string | null): number | undefined {
   return Math.max(0, retryAt - Date.now());
 }
 
+/** How many events of the batch reached the server before this error. Present
+ * on every error postEvents throws. */
+export interface DeliveredSoFar {
+  delivered: number;
+}
+
+function withDelivered(error: unknown, delivered: number): unknown {
+  if (typeof error === "object" && error !== null) {
+    Object.defineProperty(error, "delivered", { value: delivered, enumerable: true });
+    return error;
+  }
+  return Object.assign(new Error(String(error)), { delivered });
+}
+
+/** Carries the status, so a caller holding events can tell "come back later"
+ * from "this will never be accepted" without parsing the message. */
+export class IngestHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "IngestHttpError";
+    this.status = status;
+  }
+}
+
 async function buildHttpError(response: Response): Promise<Error> {
   const body = (await response.text()).trim();
   const statusText = response.statusText.length === 0 ? "" : ` ${response.statusText}`;
   const bodyText = body.length === 0 ? "" : `: ${body.slice(0, 512)}`;
 
-  return new Error(`Ingest POST failed with HTTP ${String(response.status)}${statusText}${bodyText}`);
+  return new IngestHttpError(
+    `Ingest POST failed with HTTP ${String(response.status)}${statusText}${bodyText}`,
+    response.status
+  );
 }
 
 async function sleep(delayMs: number): Promise<void> {

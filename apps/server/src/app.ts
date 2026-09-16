@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { loadCompiledBots } from "@crawlytics/registry";
 import type { BotRegistryEntry } from "@crawlytics/registry";
-import { ingestBatchSchema } from "@crawlytics/shared";
+import { ingestEnvelopeSchema, rawLogEventSchema } from "@crawlytics/shared";
 import type { RawLogEvent } from "@crawlytics/shared";
 
 import { DEFAULT_ALERTS_CONFIG } from "./alerts/config.js";
@@ -64,6 +64,9 @@ export interface AppOptions {
   mcpRateLimitPerMinute?: number;
   logger?: boolean;
 }
+
+/** How long a sensor should wait after the ingest buffer refuses it. */
+const INGEST_RETRY_AFTER_SECONDS = 5;
 
 const SESSION_COOKIE = "tc_session";
 
@@ -146,24 +149,58 @@ export function buildApp(options: AppOptions): FastifyInstance {
       return reply.code(401).send({ error: "invalid or missing API key" });
     }
 
-    const parsed = ingestBatchSchema.safeParse(request.body);
-    if (!parsed.success) {
+    // Per event, not per batch. The batch used to be validated atomically, so a
+    // single unreadable line — an over-long path, a timestamp in a shape this
+    // schema does not take — answered 400 for all 5000 of them. No sensor
+    // treats 400 as recoverable, and none should: retrying an unreadable batch
+    // forever is worse. So the whole batch was dropped for one bad line, and a
+    // log tailer reading a file it does not control cannot promise clean lines.
+    const envelope = ingestEnvelopeSchema.safeParse(request.body);
+    if (!envelope.success) {
       rejectedRequests += 1;
-      return reply.code(400).send({ error: "invalid payload", issues: parsed.error.issues.slice(0, 5) });
+      return reply.code(400).send({ error: "invalid payload", issues: envelope.error.issues.slice(0, 5) });
     }
 
-    if (!options.batcher.push(siteId, parsed.data.events)) {
+    const events: RawLogEvent[] = [];
+    const issues: Array<{ index: number; message: string }> = [];
+    for (const [index, candidate] of envelope.data.events.entries()) {
+      const one = rawLogEventSchema.safeParse(candidate);
+      if (one.success) {
+        events.push(one.data);
+      } else if (issues.length < 5) {
+        issues.push({ index, message: one.error.issues[0]?.message ?? "invalid event" });
+      }
+    }
+    const rejected = envelope.data.events.length - events.length;
+
+    if (events.length === 0) {
+      // Nothing readable at all is a sender that is wrong about the format, not
+      // a line that slipped through. It has to hear so.
       rejectedRequests += 1;
-      return reply.code(429).send({ error: "ingest buffer full, retry later" });
+      return reply.code(400).send({ error: "invalid payload", rejected, issues });
+    }
+
+    if (!options.batcher.push(siteId, events)) {
+      rejectedRequests += 1;
+      // A sensor told only "no" has to guess when to come back, and guessing is
+      // how events get dropped. ingest-cli already honours this header; the
+      // node sensor backs off on 429 whether or not it reads the number.
+      return reply
+        .code(429)
+        .header("retry-after", String(INGEST_RETRY_AFTER_SECONDS))
+        .send({ error: "ingest buffer full, retry later" });
     }
 
     const now = new Date().toISOString();
-    acceptedEvents += parsed.data.events.length;
+    acceptedEvents += events.length;
     acceptedBatches += 1;
     lastIngestAt = now;
     const prior = siteIngest.get(siteId);
-    siteIngest.set(siteId, { at: now, count: (prior?.count ?? 0) + parsed.data.events.length });
-    return reply.code(202).send({ accepted: parsed.data.events.length });
+    siteIngest.set(siteId, { at: now, count: (prior?.count ?? 0) + events.length });
+    if (rejected > 0) {
+      return reply.code(202).send({ accepted: events.length, rejected, issues });
+    }
+    return reply.code(202).send({ accepted: events.length });
   });
 
   // In-memory brute-force backstop for the single shared dashboard password:
@@ -723,7 +760,8 @@ export function buildApp(options: AppOptions): FastifyInstance {
       if (!params) {
         return reply;
       }
-      return reply.send({ bots: await stats.bots(params.site, params.hours) });
+      const top = await stats.bots(params.site, params.hours);
+      return reply.send({ bots: top.rows, truncated: top.truncated });
     });
 
     app.get("/api/v1/bot/:botId", async (request, reply) => {
@@ -894,7 +932,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
       const { site, hours, table, days } = parsed.data;
       let rows: Array<Record<string, unknown>> = [];
       if (table === "bots") {
-        rows = (await stats.bots(site, hours)) as unknown as Array<Record<string, unknown>>;
+        rows = (await stats.bots(site, hours)).rows as unknown as Array<Record<string, unknown>>;
       } else if (table === "pages") {
         rows = (await stats.pages(site, hours, "")) as unknown as Array<Record<string, unknown>>;
       } else if (table === "citations") {

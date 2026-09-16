@@ -2,6 +2,8 @@ import * as echarts from "echarts";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPagesDaily, type PagesDaily } from "./api.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
 import { buildLineSeries, defaultSelected, type LineSeries, MAX_SELECTED, toggleSelected } from "./trends.js";
 
 const PALETTE = [
@@ -63,30 +65,17 @@ function TrendChart({ dates, series }: { dates: string[]; series: LineSeries[] }
 /** Daily AI-hits-per-page trends with a top-10 page selector (max 10 series). */
 export function PagesTrends({ site }: { site: string }) {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<PagesDaily | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  const state = useRequest<PagesDaily>(() => getPagesDaily(site, days, 30), [site, days]);
+  const data = state.data;
 
+  // The default selection follows whatever data last arrived; a refusal leaves
+  // the previous choice alone rather than silently emptying the chart.
   useEffect(() => {
-    let alive = true;
-    getPagesDaily(site, days, 30)
-      .then((result) => {
-        if (!alive) {
-          return;
-        }
-        setData(result);
-        setSelected(defaultSelected(result.pages));
-      })
-      .catch(() => {
-        if (!alive) {
-          return;
-        }
-        setData(null);
-        setSelected([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [site, days]);
+    if (state.status === "ready") {
+      setSelected(defaultSelected(state.data.pages));
+    }
+  }, [state.status, state.data]);
 
   const series = useMemo(() => (data ? buildLineSeries(data, selected) : []), [data, selected]);
   const atCap = selected.length >= MAX_SELECTED;
@@ -104,7 +93,7 @@ export function PagesTrends({ site }: { site: string }) {
         </div>
       </div>
       {!data || data.dates.length === 0 ? (
-        <div className="empty">Нет данных за период</div>
+        <Placeholder state={state} empty="Нет данных за период" />
       ) : series.length === 0 ? (
         <div className="empty">Выберите страницы для графика</div>
       ) : (

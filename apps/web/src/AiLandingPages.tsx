@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { exportDailyCsvUrl, getAiLandingPages, type AiLandingPage } from "./api.js";
 import { fmtNum } from "./format.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
 
 const RANGES = [7, 30, 90];
 
@@ -20,25 +22,11 @@ function clicksPerHundred(row: AiLandingPage): number | null {
  */
 export function AiLandingPages({ site }: { site: string }) {
   const [days, setDays] = useState(30);
-  const [pages, setPages] = useState<AiLandingPage[] | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getAiLandingPages(site, days, 50)
-      .then((result) => {
-        if (alive) {
-          setPages(result.pages);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setPages(null);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [site, days]);
+  const state = useRequest<{ pages: AiLandingPage[] }>(
+    () => getAiLandingPages(site, days, 50),
+    [site, days]
+  );
+  const pages = state.data?.pages ?? null;
 
   return (
     <div className="card">
@@ -89,7 +77,7 @@ export function AiLandingPages({ site }: { site: string }) {
           </p>
         </>
       ) : (
-        <div className="empty">Пока никто не переходил из AI за этот период</div>
+        <Placeholder state={state} empty="Пока никто не переходил из AI за этот период" />
       )}
     </div>
   );

@@ -4,6 +4,8 @@ import { createKey, createSite, getAlerts, getRobotsSuggestion, getSiteStatus, l
 import { MCP_KEY_PLACEHOLDER, claudeCodeCommand, genericClientConfig, mcpEndpoint } from "./mcp.js";
 import type { AlertsConfig, BotPolicy, Site, SiteStatus } from "./api.js";
 import { timeAgo } from "./format.js";
+import { Placeholder } from "./Placeholder.js";
+import { useRequest } from "./request.js";
 import { curlSnippet, workerSnippet } from "./sensors.js";
 import type { Sensor } from "./sensors.js";
 
@@ -75,30 +77,22 @@ const RULE_LABELS: Array<{ key: keyof AlertsConfig["rules"]; label: string }> = 
 
 /** Webhook alerts. OFF until a URL is saved — the server never posts anywhere by default. */
 function AlertsSettings() {
-  const [config, setConfig] = useState<AlertsConfig | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    getAlerts()
-      .then((next) => {
-        if (alive) {
-          setConfig(next);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setConfig(null);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const state = useRequest<AlertsConfig>(() => getAlerts(), []);
+  // Saving replaces the config in place; the loaded one is the starting point.
+  const [edited, setEdited] = useState<AlertsConfig | null>(null);
+  const config = edited ?? state.data;
 
   if (config === null) {
-    return null;
+    // This used to `return null`, so a refused request removed the entire
+    // alerts card from the page with nothing in its place.
+    return (
+      <div className="card">
+        <div className="step"><span className="num">6</span><h3>Алерты</h3></div>
+        <Placeholder state={state} empty="Настройки алертов недоступны" />
+      </div>
+    );
   }
 
   async function save() {
@@ -108,7 +102,7 @@ function AlertsSettings() {
     setBusy(true);
     setNote(null);
     try {
-      setConfig(await putAlerts(config));
+      setEdited(await putAlerts(config));
       setNote("Сохранено ✓");
     } catch (cause) {
       setNote((cause as Error).message);
@@ -140,7 +134,7 @@ function AlertsSettings() {
         <input
           placeholder="https://hooks.slack.com/services/… (пусто = выключено)"
           value={config.webhookUrl}
-          onChange={(event) => setConfig({ ...config, webhookUrl: event.target.value })}
+          onChange={(event) => setEdited({ ...config, webhookUrl: event.target.value })}
           style={{ flex: 1 }}
         />
       </div>
@@ -149,7 +143,7 @@ function AlertsSettings() {
           <input
             type="checkbox"
             checked={config.rules[rule.key]}
-            onChange={(event) => setConfig({ ...config, rules: { ...config.rules, [rule.key]: event.target.checked } })}
+            onChange={(event) => setEdited({ ...config, rules: { ...config.rules, [rule.key]: event.target.checked } })}
           />
           <span>{rule.label}</span>
         </label>
@@ -161,7 +155,7 @@ function AlertsSettings() {
           min={1}
           max={100}
           value={config.spikeFactor}
-          onChange={(event) => setConfig({ ...config, spikeFactor: Number(event.target.value) || 1 })}
+          onChange={(event) => setEdited({ ...config, spikeFactor: Number(event.target.value) || 1 })}
           style={{ width: 70 }}
         />
         <span title="Silence window per repeated alert">Кулдаун, мин</span>
@@ -170,7 +164,7 @@ function AlertsSettings() {
           min={5}
           max={10080}
           value={config.cooldownMinutes}
-          onChange={(event) => setConfig({ ...config, cooldownMinutes: Number(event.target.value) || 5 })}
+          onChange={(event) => setEdited({ ...config, cooldownMinutes: Number(event.target.value) || 5 })}
           style={{ width: 90 }}
         />
       </div>
@@ -188,25 +182,11 @@ function RobotsGenerator({ site }: { site: string }) {
   const [train, setTrain] = useState<BotPolicy>("deny");
   const [search, setSearch] = useState<BotPolicy>("allow");
   const [fetchPolicy, setFetchPolicy] = useState<BotPolicy>("allow");
-  const [result, setResult] = useState<{ robotsTxt: string; llmsTxt: string } | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getRobotsSuggestion(site, train, search, fetchPolicy)
-      .then((next) => {
-        if (alive) {
-          setResult(next);
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setResult(null);
-        }
-      });
-    return () => {
-      alive = false;
-    };
-  }, [site, train, search, fetchPolicy]);
+  const state = useRequest<{ robotsTxt: string; llmsTxt: string }>(
+    () => getRobotsSuggestion(site, train, search, fetchPolicy),
+    [site, train, search, fetchPolicy]
+  );
+  const result = state.data;
 
   return (
     <div className="card">
@@ -240,7 +220,7 @@ function RobotsGenerator({ site }: { site: string }) {
           <CopyBlock text={result.llmsTxt} />
         </>
       ) : (
-        <div className="empty">Не удалось получить рекомендацию</div>
+        <Placeholder state={state} empty="Рекомендации для этих настроек нет" />
       )}
     </div>
   );
@@ -295,7 +275,7 @@ function McpSetup({ site }: { site: string }) {
 }
 
 export function Onboarding() {
-  const [sites, setSites] = useState<Site[]>([]);
+
   const [newId, setNewId] = useState("");
   const [newDomain, setNewDomain] = useState("");
   const [active, setActive] = useState<string | null>(null);
@@ -308,15 +288,12 @@ export function Onboarding() {
 
   const ingestUrl = useMemo(() => `${window.location.origin}/api/ingest`, []);
 
-  const reloadSites = useCallback(() => {
-    listSites()
-      .then((result) => setSites(result.sites))
-      .catch(() => setSites([]));
-  }, []);
-
-  useEffect(() => {
-    reloadSites();
-  }, [reloadSites]);
+  // `reloadSites` is called imperatively after a site is created, so the reload
+  // is a dependency of its own rather than a second copy of the request.
+  const [reloadToken, setReloadToken] = useState(0);
+  const reloadSites = useCallback(() => setReloadToken((n) => n + 1), []);
+  const sitesState = useRequest<{ sites: Site[] }>(() => listSites(), [reloadToken]);
+  const sites = sitesState.data?.sites ?? [];
 
   // Poll the active site's ingest status so step 4 flips to ✓ on its own.
   useEffect(() => {
@@ -420,6 +397,9 @@ export function Onboarding() {
           <input placeholder="domain (optional)" value={newDomain} onChange={(event) => setNewDomain(event.target.value)} />
           <button disabled={busy || newId.trim() === ""} onClick={() => void addSite()}>Add</button>
         </div>
+        {sitesState.status === "error" ? (
+          <div className="err">Could not load the site list: {sitesState.message}</div>
+        ) : null}
         {sites.length > 0 ? (
           <div className="wz-sites">
             {sites.map((site) => (

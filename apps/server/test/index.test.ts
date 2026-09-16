@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../src/app.js";
+import { shutdownExitCode } from "../src/index.js";
 import { createBatcher } from "../src/batcher.js";
 import { createMemoryStore } from "../src/metadata/memory-store.js";
 
@@ -26,6 +27,24 @@ async function makeApp(push: (siteId: string, events: unknown[]) => boolean = ()
 }
 
 describe("POST /api/ingest", () => {
+  it("tells a full server's clients when to come back", async () => {
+    // Counting in-flight events against the cap means 429 happens sooner and
+    // more often. A sensor that is told only "no" has to guess; ingest-cli
+    // already honours Retry-After, and guessing is how events get dropped.
+    const app = await makeApp(() => false);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ingest",
+      headers: { authorization: "Bearer k-live-1" },
+      payload: { events: [VALID_EVENT] }
+    });
+    expect(response.statusCode).toBe(429);
+    // The value, not just its presence: it has to agree with the node sensor's
+    // first back-off step, and "defined" would stay green if someone made it
+    // 5000 by reaching for milliseconds.
+    expect(response.headers["retry-after"]).toBe("5");
+  });
+
   it("rejects missing or unknown API keys", async () => {
     const app = await makeApp();
     const noAuth = await app.inject({ method: "POST", url: "/api/ingest", payload: { events: [VALID_EVENT] } });
@@ -64,6 +83,54 @@ describe("POST /api/ingest", () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toEqual({ accepted: 2 });
     expect(push).toHaveBeenCalledWith("site-1", expect.any(Array));
+  });
+
+  it("one bad event does not cost the batch it arrived in", async () => {
+    // The batch was validated atomically, so a single over-long path or a
+    // timestamp a log line produced in a shape zod does not take rejected all
+    // 5000 with HTTP 400 — and no sensor treats 400 as recoverable, so the
+    // whole batch was dropped on the floor. A log tailer reading a file it does
+    // not control cannot promise every line is clean.
+    const push = vi.fn((siteId: string, events: unknown[]) => Boolean(siteId) || events.length >= 0);
+    const app = await makeApp(push);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ingest",
+      headers: { authorization: "Bearer k-live-1" },
+      payload: {
+        events: [VALID_EVENT, { ...VALID_EVENT, ts: "not-a-date" }, { ...VALID_EVENT, path: "/x" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ accepted: 2, rejected: 1 });
+    const forwarded = push.mock.calls[0]?.[1];
+    expect(forwarded).toHaveLength(2);
+  });
+
+  it("says which events it could not read, so the sender can fix them", async () => {
+    const app = await makeApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ingest",
+      headers: { authorization: "Bearer k-live-1" },
+      payload: { events: [VALID_EVENT, { ...VALID_EVENT, ts: "not-a-date" }] }
+    });
+    const body: { issues?: Array<{ index: number }> } = response.json();
+    expect(body.issues?.[0]?.index).toBe(1);
+  });
+
+  it("still refuses a batch in which nothing at all is readable", async () => {
+    // A sensor sending the wrong shape entirely must hear about it rather than
+    // getting 202 for a batch that delivered nothing.
+    const app = await makeApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ingest",
+      headers: { authorization: "Bearer k-live-1" },
+      payload: { events: [{ ...VALID_EVENT, ts: "not-a-date" }] }
+    });
+    expect(response.statusCode).toBe(400);
   });
 
   it("returns 429 when the buffer is full", async () => {
@@ -181,6 +248,87 @@ describe("createBatcher", () => {
     await batcher.flush();
     expect(batcher.size).toBe(0); // retried successfully
     expect(process).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts in-flight events against the cap, and keeps every accepted one when the write fails", async () => {
+    // The admission check used to look at the buffer alone. A batch handed to
+    // process() is no longer in the buffer, so its events stopped counting and
+    // new ones were accepted into space that was not free — and when the write
+    // failed, the old batch was put back ONLY if it still fitted. Otherwise it
+    // was dropped: events the ingest API had already answered 202 to.
+    let release: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gate: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      gate = resolve;
+    });
+    const process = vi.fn(() => {
+      release?.();
+      return held.then(() => Promise.reject(new Error("sink down")));
+    });
+    const batcher = createBatcher({ process, flushSize: 2, flushIntervalMs: 0, maxBuffer: 4 });
+
+    // Two events fill flushSize and go out; the buffer is empty again.
+    expect(batcher.push("site-1", [item("/a"), item("/b")])).toBe(true);
+    await started;
+
+    // THREE is the number that tells the two behaviours apart. Pushing two
+    // passes either way (0+2 and 2+2 both fit in 4), so a test that pushes two
+    // is green on the broken code — that mistake was already made once here.
+    expect(batcher.push("site-1", [item("/c"), item("/d"), item("/e")])).toBe(false);
+    expect(batcher.push("site-1", [item("/c"), item("/d")])).toBe(true);
+
+    gate?.();
+    await vi.waitFor(() => {
+      expect(process).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      // Everything accepted is still here: the two that failed plus the two after.
+      expect(batcher.size).toBe(4);
+    });
+  });
+
+  it("reports what it could not hand over when it stops", async () => {
+    // stop() resolved successfully even when the write failed, so a shutdown
+    // could exit(0) on top of a full buffer without anyone being told.
+    const process = vi.fn(() => Promise.reject(new Error("sink down")));
+    const batcher = createBatcher({ process, flushIntervalMs: 0 });
+    batcher.push("site-1", [item("/a"), item("/b")]);
+    expect(await batcher.stop()).toMatchObject({ undelivered: 2 });
+  });
+
+  it("keeps the batch when the processor throws synchronously", async () => {
+    // The contract above says a throw keeps the batch for retry. Attaching the
+    // handlers to the returned promise only honours that for an async throw:
+    // a synchronous one escapes before there is a promise to attach to, and the
+    // batch is lost as an object while size still counts it as ours.
+    let attempts = 0;
+    const process = vi.fn(() => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("sink down");
+      }
+      return Promise.resolve();
+    });
+    const batcher = createBatcher({ process, flushIntervalMs: 0 });
+    batcher.push("site-1", [item("/a"), item("/b")]);
+
+    await batcher.flush();
+    expect(batcher.size).toBe(2);
+
+    await batcher.flush();
+    expect(batcher.size).toBe(0);
+    expect(process).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a shutdown that lost events look clean", () => {
+    // An orchestrator reading only the exit code would restart quietly on top
+    // of a hole. Pinned separately because the wiring in index.ts runs inside
+    // the isMain block and no test can observe process.exit there.
+    expect(shutdownExitCode({ undelivered: 0 })).toBe(0);
+    expect(shutdownExitCode({ undelivered: 2 })).toBe(1);
   });
 
   it("flushes on the timer", async () => {

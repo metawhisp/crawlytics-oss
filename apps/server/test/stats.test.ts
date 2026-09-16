@@ -214,6 +214,40 @@ describe("createStatsStore.citations", () => {
   });
 });
 
+describe("createStatsStore.bots", () => {
+  it("says when the list it returned is not the whole list", async () => {
+    // "All bots" in the dashboard and "Every bot seen in the window" in the MCP
+    // description, over ORDER BY hits DESC LIMIT 100. A site with more bots than
+    // that got a truncated ranked list presented as complete — and an assistant
+    // asked "which bots visit me" answered from it.
+    const client = fakeClient([
+      [/AS hits/, Array.from({ length: 101 }, (_, i) => ({
+        bot_id: `bot-${String(i)}`, operator: "x", actor_type: "other_bot",
+        hits: "5", pages: "1", spoofed: "0", errors: "0", last_seen: "2026-09-15 10:00:00"
+      }))]
+    ]);
+    const store = createStatsStore(client);
+    const result = await store.bots("acme", 24);
+    expect(result.truncated).toBe(true);
+    expect(result.rows).toHaveLength(100);
+    // The flag is only knowable because one more row than the cap was asked
+    // for. Without this the fake client — which ignores the limit — would keep
+    // the test green with the +1 removed.
+    const asked = client.captured.find((entry) => entry.query.includes("AS hits"));
+    expect(asked?.query_params).toMatchObject({ limit: 101 });
+  });
+
+  it("and says when it is", async () => {
+    const client = fakeClient([
+      [/AS hits/, [{ bot_id: "gptbot", operator: "openai", actor_type: "ai_training",
+        hits: "5", pages: "1", spoofed: "0", errors: "0", last_seen: "2026-09-15 10:00:00" }]]
+    ]);
+    const result = await createStatsStore(client).bots("acme", 24);
+    expect(result.truncated).toBe(false);
+    expect(result.rows).toHaveLength(1);
+  });
+});
+
 describe("createStatsStore.crawlHealth", () => {
   it("returns AI-error pages and pages AI never crawled (blind spots)", async () => {
     const client = fakeClient([
@@ -251,6 +285,12 @@ describe("createStatsStore.crawlHealth", () => {
     // broken = AI bots hitting >=400; blind spots = zero AI hits but real human traffic
     const broken = client.captured.find((entry) => entry.query.includes("AS ai_errors"));
     expect(broken?.query).toContain("actor_type LIKE 'ai_%'");
+    // A refusal the owner configured is not a broken page. The same exclusion
+    // is in the alert rule, and the integration fixture holds both shapes it
+    // has to catch: a training bot meeting a robots.txt block, and a fetcher
+    // meeting one. Excluding by actor_type instead would also have hidden
+    // /about — five real 404s found by a training crawler.
+    expect(broken?.query).toContain("status NOT IN (401, 403)");
     const blind = client.captured.find((entry) => entry.query.includes("AS human_hits"));
     expect(blind?.query).toContain("= 0");
     // blind spots are PAGES: successful GET/HEAD, assets/API noise excluded
