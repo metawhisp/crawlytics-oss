@@ -17,15 +17,15 @@ const RANGES = [7, 30, 90];
 function whatHappened(row: { sampleStatus: number; everOk: boolean }): string {
   const status = row.sampleStatus;
   if (status < 400) {
-    return "уже отвечает";
+    return "answering again";
   }
   if (status === 429) {
-    return "упёрся в лимит";
+    return "hit the rate limit";
   }
   if (status >= 500) {
-    return "ошибка сервера";
+    return "server error";
   }
-  return row.everOk ? "страница сломалась" : "такой страницы нет";
+  return row.everOk ? "page broke" : "no such page";
 }
 
 /** Actionable crawl problems: broken pages AI keeps hitting + pages AI never sees. */
@@ -38,8 +38,8 @@ export function CrawlHealth({ site }: { site: string }) {
     <div className="grid2">
       <div className="card">
         <div className="cardhead">
-          <h3 title="Трафик подделок под AI-ботов исключён — иначе список забивают сканеры">
-            Битые страницы для AI
+          <h3 title="Traffic from bots faking an AI identity is excluded, or scanners fill the list">
+            Broken pages for AI
           </h3>
           <div className="rangetabs">
             {RANGES.map((r) => (
@@ -56,7 +56,7 @@ export function CrawlHealth({ site }: { site: string }) {
                 <th>Page</th>
                 <th className="num">AI errors</th>
                 <th className="num">Status</th>
-                <th title="Была ли страница живой в этом периоде">Что случилось</th>
+                <th title="Whether the page was alive at any point in this period">What happened</th>
                 <th className="num">Last hit</th>
               </tr>
             </thead>
@@ -75,14 +75,14 @@ export function CrawlHealth({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <Placeholder state={state} empty="AI-боты не упирались в ошибки — отлично" />
+          <Placeholder state={state} empty="AI bots hit no errors — nothing to fix" />
         )}
       </div>
 
       <div className="card">
         <div className="cardhead">
-          <h3 title="Считаются только сессии, которые вели себя как браузер — подтянули стили или скрипты. Сканер этого не делает">
-            Слепые зоны AI
+          <h3 title="Only sessions that behaved like a browser are counted, meaning they pulled styles or scripts. A scanner does not">
+            AI blind spots
           </h3>
         </div>
         {data && data.blindSpots.length > 0 ? (
@@ -90,8 +90,8 @@ export function CrawlHealth({ site }: { site: string }) {
             <thead>
               <tr>
                 <th>Page</th>
-                <th className="num" title="Хиты от сессий, которые рендерили страницу">Просмотры</th>
-                <th className="num" title="Сколько разных браузерных сессий читали страницу">Читатели</th>
+                <th className="num" title="Hits from sessions that rendered the page">Views</th>
+                <th className="num" title="How many distinct browser sessions read the page">Readers</th>
               </tr>
             </thead>
             <tbody>
@@ -107,7 +107,7 @@ export function CrawlHealth({ site }: { site: string }) {
         ) : (
           <Placeholder
             state={state}
-            empty="Нет страниц, которые видят люди, но не видел AI (нужен человеческий трафик как база)"
+            empty="No pages that people see and AI has not (this needs human traffic as a baseline)"
           />
         )}
       </div>

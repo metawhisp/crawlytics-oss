@@ -1,8 +1,46 @@
 # Crawlytics
 
-Crawlytics is a self-hosted analytics product for inbound AI traffic. It ingests web server logs and edge or middleware events, classifies AI crawlers and AI assistant referrals, verifies known bots, and exposes multi-site dashboards.
+**Grow the readers who arrive from ChatGPT, Perplexity and the rest — starting
+with which of them actually send you any.**
 
-Source planning documents are kept in the numbered Markdown files in the repository root.
+AI assistants read your site, and sometimes send a human back to it afterwards.
+Some vendors return readers. Some take thousands of pages and return nobody. The
+analytics you already run cannot tell those two apart: the crawl and the visit
+happen hours apart, under different names, with nothing joining them up.
+
+Crawlytics joins them up. For every vendor it sets what it took — crawls —
+against what it sent back — humans arriving from that vendor's assistant — and
+turns that into one comparable price: *one reader per so many crawls*. With that
+in hand you can spend your effort on the assistants that return readers, and
+stop paying to feed the ones that never do.
+
+It is self-hosted: it ingests your web server logs and edge or middleware
+events, classifies AI crawlers and AI assistant referrals, verifies known bots,
+and runs multi-site dashboards. Your logs stay on your server.
+
+## Install
+
+One command on your own host, behind automatic HTTPS:
+
+```sh
+cd deploy && ./install.sh
+```
+
+It asks for a domain and an email, generates its own secrets, brings up the app
+and ClickHouse behind Caddy, and issues a TLS certificate on first request. Then
+open the dashboard, sign in with the password it set, and add a site under
+**Setup** — the wizard hands you the snippet for your sensor and flips to a tick
+of its own accord when the first events arrive.
+
+Full operations guide, upgrades and backups: [deploy/README.md](deploy/README.md).
+Sensor options (Cloudflare Worker, Node middleware, log tailer):
+[docs/sensors.md](docs/sensors.md).
+
+### Ask your own data a question
+
+Crawlytics speaks MCP, so Claude (or any MCP client) can query it directly with a
+read-only key scoped to one site — 13 tools over the same API the dashboard uses.
+The **Setup** tab generates the key and the client config.
 
 ## Workspace
 

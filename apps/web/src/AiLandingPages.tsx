@@ -31,7 +31,7 @@ export function AiLandingPages({ site }: { site: string }) {
   return (
     <div className="card">
       <div className="cardhead">
-        <h3>Страницы, куда AI приводит людей</h3>
+        <h3>Pages AI sends people to</h3>
         <a className="csv" href={exportDailyCsvUrl(site, days, "funnels")} download>
           CSV
         </a>
@@ -49,11 +49,11 @@ export function AiLandingPages({ site }: { site: string }) {
             <thead>
               <tr>
                 <th>Page</th>
-                <th className="num" title="ai_training — боты, собирающие текст для обучения">Обучение</th>
-                <th className="num" title="ai_search — индексаторы ответов">AI-поиск</th>
-                <th className="num" title="ai_fetcher — живая подгрузка во время ответа">Live-fetch</th>
-                <th className="num" title="Люди, пришедшие по ссылке из AI-ассистента">Перешли люди</th>
-                <th className="num" title="Кликов на 100 хитов ботов">На 100 хитов</th>
+                <th className="num" title="ai_training — bots collecting text to train models">Training</th>
+                <th className="num" title="ai_search — answer indexers">AI search</th>
+                <th className="num" title="ai_fetcher — fetched live while answering">Live-fetch</th>
+                <th className="num" title="People who arrived through a link from an AI assistant">Arrived</th>
+                <th className="num" title="Clicks per 100 bot hits">Per 100 hits</th>
               </tr>
             </thead>
             <tbody>
@@ -73,11 +73,11 @@ export function AiLandingPages({ site }: { site: string }) {
             </tbody>
           </table>
           <p className="note">
-            Это независимые типы ботов, а не стадии одного пути: клики бывают и на страницах, которые никто не краулил.
+            These are independent bot types, not stages of one path: clicks land on pages nobody crawled too.
           </p>
         </>
       ) : (
-        <Placeholder state={state} empty="Пока никто не переходил из AI за этот период" />
+        <Placeholder state={state} empty="Nobody has arrived from AI in this period" />
       )}
     </div>
   );

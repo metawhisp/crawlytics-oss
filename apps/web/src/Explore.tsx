@@ -143,14 +143,14 @@ export function Explore({ site, hours }: { site: string; hours: number }) {
           className="csv"
           onClick={downloadCsv}
           disabled={state.status !== "ready"}
-          title={state.status === "ready" ? undefined : "Данных ещё нет"}
+          title={state.status === "ready" ? undefined : "No data yet"}
           style={{ background: "transparent", cursor: state.status === "ready" ? "pointer" : "default" }}
         >
           CSV
         </button>
       </div>
 
-      {rows.length === 0 ? <Placeholder state={state} empty="Нет данных под эти условия" /> : null}
+      {rows.length === 0 ? <Placeholder state={state} empty="No data for these filters" /> : null}
       {view !== "table" && rows.length > 0 ? <div ref={chartRef} style={{ width: "100%", height: 360 }} /> : null}
       {view === "table" && rows.length > 0 ? (
         <table>

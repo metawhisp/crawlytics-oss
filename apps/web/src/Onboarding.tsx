@@ -69,10 +69,10 @@ function CopyBlock({ text }: { text: string }) {
 }
 
 const RULE_LABELS: Array<{ key: keyof AlertsConfig["rules"]; label: string }> = [
-  { key: "spike", label: "Всплеск AI-трафика" },
-  { key: "newBot", label: "Новый бот (впервые за 30д)" },
-  { key: "spoof", label: "Спуфинг (бот-подделка)" },
-  { key: "brokenCitation", label: "Страница, которую забирал AI, сломалась (4xx/5xx)" }
+  { key: "spike", label: "AI traffic spike" },
+  { key: "newBot", label: "New bot (first time in 30d)" },
+  { key: "spoof", label: "Spoofing (a bot faking its identity)" },
+  { key: "brokenCitation", label: "A page AI was taking broke (4xx/5xx)" }
 ];
 
 /** Webhook alerts. OFF until a URL is saved — the server never posts anywhere by default. */
@@ -89,8 +89,8 @@ function AlertsSettings() {
     // alerts card from the page with nothing in its place.
     return (
       <div className="card">
-        <div className="step"><span className="num">6</span><h3>Алерты</h3></div>
-        <Placeholder state={state} empty="Настройки алертов недоступны" />
+        <div className="step"><span className="num">6</span><h3>Alerts</h3></div>
+        <Placeholder state={state} empty="Alert settings are unavailable" />
       </div>
     );
   }
@@ -103,7 +103,7 @@ function AlertsSettings() {
     setNote(null);
     try {
       setEdited(await putAlerts(config));
-      setNote("Сохранено ✓");
+      setNote("Saved ✓");
     } catch (cause) {
       setNote((cause as Error).message);
     } finally {
@@ -116,7 +116,7 @@ function AlertsSettings() {
     setNote(null);
     try {
       const result = await sendTestAlert();
-      setNote(result.ok ? "Тестовый алерт доставлен ✓" : "Webhook не ответил 2xx");
+      setNote(result.ok ? "Test alert delivered ✓" : "The webhook did not answer 2xx");
     } catch (cause) {
       setNote((cause as Error).message);
     } finally {
@@ -126,13 +126,13 @@ function AlertsSettings() {
 
   return (
     <div className="card">
-      <div className="step"><span className="num">6</span><h3>Алерты (webhook)</h3></div>
+      <div className="step"><span className="num">6</span><h3>Alerts (webhook)</h3></div>
       <p className="muted">
-        Выключены, пока не указан URL. Подходит любой JSON-webhook (Slack-совместимый payload с полем text).
+        Off until a URL is set. Any JSON webhook works (Slack-compatible payload with a text field).
       </p>
       <div className="wz-row">
         <input
-          placeholder="https://hooks.slack.com/services/… (пусто = выключено)"
+          placeholder="https://hooks.slack.com/services/… (empty = off)"
           value={config.webhookUrl}
           onChange={(event) => setEdited({ ...config, webhookUrl: event.target.value })}
           style={{ flex: 1 }}
@@ -149,7 +149,7 @@ function AlertsSettings() {
         </label>
       ))}
       <div className="wz-row">
-        <span title="Fire when last-hour AI hits exceed factor x 7-day average">Порог всплеска ×</span>
+        <span title="Fire when last-hour AI hits exceed factor x 7-day average">Spike threshold ×</span>
         <input
           type="number"
           min={1}
@@ -158,7 +158,7 @@ function AlertsSettings() {
           onChange={(event) => setEdited({ ...config, spikeFactor: Number(event.target.value) || 1 })}
           style={{ width: 70 }}
         />
-        <span title="Silence window per repeated alert">Кулдаун, мин</span>
+        <span title="Silence window per repeated alert">Cooldown, min</span>
         <input
           type="number"
           min={5}
@@ -169,7 +169,7 @@ function AlertsSettings() {
         />
       </div>
       <div className="wz-row">
-        <button className="wz-btn" disabled={busy} onClick={() => void save()}>Сохранить</button>
+        <button className="wz-btn" disabled={busy} onClick={() => void save()}>Save</button>
         <button disabled={busy || config.webhookUrl === ""} onClick={() => void test()}>Send test</button>
         {note !== null ? <span className="muted">{note}</span> : null}
       </div>
@@ -190,9 +190,9 @@ function RobotsGenerator({ site }: { site: string }) {
 
   return (
     <div className="card">
-      <div className="step"><span className="num">5</span><h3>robots.txt / llms.txt для <b>{site}</b></h3></div>
+      <div className="step"><span className="num">5</span><h3>robots.txt / llms.txt for <b>{site}</b></h3></div>
       <p className="muted">
-        Рекомендация: блокировать обучающих ботов, но пускать поисковые и те, что забирают страницу в ответ, — они приводят людей.
+        Recommended: block training bots, but allow search bots and the ones that fetch a page to answer with. Those send people.
       </p>
       <PolicyToggle
         label="Training (GPTBot, ClaudeBot…)"
@@ -216,11 +216,11 @@ function RobotsGenerator({ site }: { site: string }) {
         <>
           <h4>robots.txt</h4>
           <CopyBlock text={result.robotsTxt} />
-          <h4>llms.txt (заготовка — допишите свои страницы)</h4>
+          <h4>llms.txt (a starting point — add your own pages)</h4>
           <CopyBlock text={result.llmsTxt} />
         </>
       ) : (
-        <Placeholder state={state} empty="Рекомендации для этих настроек нет" />
+        <Placeholder state={state} empty="No suggestion for these settings" />
       )}
     </div>
   );
@@ -244,7 +244,7 @@ function McpSetup({ site }: { site: string }) {
       const created = await createKey(site, "read");
       setKey(created.key);
     } catch {
-      setErr("Не удалось создать ключ");
+      setErr("Could not create the key");
     } finally {
       setBusy(false);
     }
@@ -252,22 +252,22 @@ function McpSetup({ site }: { site: string }) {
 
   return (
     <div className="card">
-      <div className="step"><span className="num">7</span><h3>MCP — спросить Claude про <b>{site}</b></h3></div>
+      <div className="step"><span className="num">7</span><h3>MCP — ask Claude about <b>{site}</b></h3></div>
       <p className="muted">
-        Подключите Claude к этим данным: он сам достанет обращения ботов, битые страницы и слепые зоны — и починит сайт.
-        Ключ даёт <b>только чтение</b> и только этого сайта; настройки и алерты через MCP менять нельзя.
+        Point Claude at this data: it pulls bot hits, broken pages and blind spots on its own, then fixes the site.
+        The key is <b>read-only</b> and scoped to this site; settings and alerts cannot be changed over MCP.
       </p>
       <button className="primary" onClick={() => void mint()} disabled={busy}>
-        {busy ? "Создаю…" : key === null ? "Создать MCP-ключ" : "Создать ещё один"}
+        {busy ? "Creating…" : key === null ? "Create an MCP key" : "Create another"}
       </button>
-      {key !== null ? <p className="muted">Ключ создан. Сохраните его — отозвать можно там же, где ключи ингеста.</p> : null}
+      {key !== null ? <p className="muted">Key created. Save it now. You can revoke it where the ingest keys live.</p> : null}
       <h4>Claude Code</h4>
       <CopyBlock text={claudeCodeCommand(endpoint, shown)} />
-      <h4>Любой MCP-клиент с поддержкой заголовков</h4>
+      <h4>Any MCP client that supports headers</h4>
       <CopyBlock text={genericClientConfig(endpoint, shown)} />
       <p className="muted">
-        Дальше просто спросите: «какие мои страницы ChatGPT забирал за месяц?», «что сломано для AI-ботов?»,
-        «каких страниц AI вообще не видит?».
+        Then just ask: “which of my pages did ChatGPT take this month?”, “what is broken for AI bots?”,
+        “which pages does AI never see?”.
       </p>
       {err !== null ? <div className="err">{err}</div> : null}
     </div>

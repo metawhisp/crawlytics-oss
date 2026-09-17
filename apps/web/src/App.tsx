@@ -52,7 +52,7 @@ function actorBadge(actorType: string): { cls: string; label: string } {
       // (matcher.ts:132). On a real site most of it is automation wearing a
       // browser string. Rows that also carry an ai_referral show that separately,
       // and THAT is evidence of a human.
-      return { cls: "b-other", label: "не опознан" };
+      return { cls: "b-other", label: "unrecognized" };
     default:
       return { cls: "b-other", label: actorType.replace("_", " ") };
   }
@@ -289,7 +289,7 @@ export function App() {
             ))}
           </select>
           {passwordRequired ? (
-            <button className="logout" onClick={() => void submitLogout()}>Выйти</button>
+            <button className="logout" onClick={() => void submitLogout()}>Log out</button>
           ) : null}
         </div>
       </aside>
@@ -340,13 +340,13 @@ function OverviewTab({ state }: { state: RequestState<Overview | null> }) {
     <>
       <div className="kpis">
         <div className="kpi">
-          <div className="l" title="Подделки под AI-ботов сюда не входят — они в плитке Spoofed">
+          <div className="l" title="Bots faking an AI identity are not counted here. They are in the Spoofed tile.">
             AI hits
           </div>
           <div className="v">{num(kpis?.aiHits)}</div>
           {kpis && prev ? <Delta now={kpis.aiHits} prev={prev.aiHits} /> : null}
-          <div className="kpi-split" title="Проверено по опубликованным вендором диапазонам или PTR · вендор не публикует способ проверки">
-            {num(kpis?.aiVerified)} проверено · {num(kpis?.aiUnverified)} не проверяется
+          <div className="kpi-split" title="Verified against the vendor's published IP ranges or PTR · vendor publishes no way to verify">
+            {num(kpis?.aiVerified)} verified · {num(kpis?.aiUnverified)} unverifiable
           </div>
         </div>
         <div className="kpi">
@@ -403,7 +403,7 @@ function OverviewTab({ state }: { state: RequestState<Overview | null> }) {
                 })}
               </tbody>
             </table>
-          ) : <Placeholder state={state} empty="Ботов пока не было" />}
+          ) : <Placeholder state={state} empty="No bots yet" />}
         </div>
 
         <div className="card">
@@ -424,7 +424,7 @@ function OverviewTab({ state }: { state: RequestState<Overview | null> }) {
                 ))}
               </tbody>
             </table>
-          ) : <Placeholder state={state} empty="Нет данных" />}
+          ) : <Placeholder state={state} empty="No data" />}
         </div>
       </div>
 
@@ -444,7 +444,7 @@ function OverviewTab({ state }: { state: RequestState<Overview | null> }) {
                 );
               })}
             </div>
-          ) : <Placeholder state={state} empty="Переходов из AI пока нет" />}
+          ) : <Placeholder state={state} empty="No AI referrals yet" />}
         </div>
 
         <div className="card">
@@ -464,7 +464,7 @@ function OverviewTab({ state }: { state: RequestState<Overview | null> }) {
                 );
               })}
             </div>
-          ) : <Placeholder state={state} empty="Тихо…" />}
+          ) : <Placeholder state={state} empty="Quiet…" />}
         </div>
       </div>
     </>
@@ -517,12 +517,12 @@ function BotsTab({ site, hours }: { site: string; hours: number }) {
               })}
             </tbody>
           </table>
-        ) : <Placeholder state={botsState} empty="Нет данных за период" />}
+        ) : <Placeholder state={botsState} empty="No data for this period" />}
       </div>
 
       {selected !== null && detail === null ? (
         <div className="card">
-          <Placeholder state={detailState} empty={`Нет данных по ${selected}`} />
+          <Placeholder state={detailState} empty={`No data for ${selected}`} />
         </div>
       ) : null}
 
@@ -532,7 +532,7 @@ function BotsTab({ site, hours }: { site: string; hours: number }) {
             <h3>{selected} — activity</h3>
             {detail.timeseries.length > 0 ? (
               <Chart data={detail.timeseries.map((row) => ({ t: row.t, ai_training: row.hits }))} />
-            ) : <Placeholder state={detailState} empty="Нет данных" />}
+            ) : <Placeholder state={detailState} empty="No data" />}
           </div>
           <div className="grid2">
             <div className="card">
@@ -623,7 +623,7 @@ function PagesTab({ site, hours }: { site: string; hours: number }) {
             ))}
           </tbody>
         </table>
-      ) : <Placeholder state={pagesState} empty="Нет страниц по фильтру" />}
+      ) : <Placeholder state={pagesState} empty="No pages match the filter" />}
       </div>
     </>
   );
@@ -650,14 +650,14 @@ function SecurityTab({ site, hours }: { site: string; hours: number }) {
               ))}
             </tbody>
           </table>
-        ) : <Placeholder state={state} empty="Спуферов за период не поймано" />}
+        ) : <Placeholder state={state} empty="No spoofers caught in this period" />}
       </div>
 
       <div className="card">
         <h3>Spoofing sources</h3>
         {security && security.spoofedSources.length > 0 ? (
           <table>
-            <thead><tr><th>IP</th><th>Geo / Network</th><th title="Последняя использованная личина; +N = IP менял их">Pretends to be</th><th className="num">Hits</th><th className="num">Last seen</th></tr></thead>
+            <thead><tr><th>IP</th><th>Geo / Network</th><th title="The most recent identity used; +N means the IP has used others">Pretends to be</th><th className="num">Hits</th><th className="num">Last seen</th></tr></thead>
             <tbody>
               {security.spoofedSources.map((source) => (
                 <tr key={source.ip}>
@@ -666,7 +666,7 @@ function SecurityTab({ site, hours }: { site: string; hours: number }) {
                   <td>
                     <span className="badge b-spoofed">{source.claimedBot}</span>
                     {source.claimedVariants > 1 ? (
-                      <span className="muted" title="Этот IP менял личины — показана последняя">
+                      <span className="muted" title="This IP has used several identities; the most recent one is shown">
                         {" "}+{source.claimedVariants - 1} UA
                       </span>
                     ) : null}
@@ -677,7 +677,7 @@ function SecurityTab({ site, hours }: { site: string; hours: number }) {
               ))}
             </tbody>
           </table>
-        ) : <Placeholder state={state} empty="Пусто" />}
+        ) : <Placeholder state={state} empty="Nothing here" />}
       </div>
     </>
   );

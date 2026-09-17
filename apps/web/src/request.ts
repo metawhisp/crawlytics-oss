@@ -2,7 +2,7 @@
  * the words. Before this module every panel wrote `.catch(() => setData(null))`
  * by hand, and `null` also meant "first render, request still in flight" — so
  * three different outcomes shared one value and the calm empty-state sentence
- * ("AI-боты не упирались в ошибки — отлично") was shown for all three.
+ * ("AI bots hit no errors — nothing to fix") was shown for all three.
  *
  * Freshness is a request NUMBER, not a `let alive = true` teardown flag. Under
  * `setInterval` (App.tsx, Onboarding.tsx) the teardown does not run between
@@ -29,7 +29,7 @@ export function idle<T>(): RequestState<T> {
 
 /** Begin request `seq`. The previous answer goes with it.
  *
- * Carrying it forward is tempting — no flash of "Загрузка…" when the operator
+ * Carrying it forward is tempting — no flash of "Loading…" when the operator
  * switches period — and it is wrong wherever the request is keyed by a
  * subject. A panel asked about bot A and then about bot B would render A's
  * timeseries, pages and sources under B's headings for the whole flight, and
@@ -63,8 +63,8 @@ export function succeeded<T>(state: RequestState<T>, seq: number, data: T): Requ
   return { status: "ready", data, message: null, seq };
 }
 
-/** What the panel shows after "Не удалось загрузить данные: ". `String(err)` on
- * an Error prefixes "Error: ", which reads as "…данные: Error: /api/… -> 500". */
+/** What the panel shows after "Could not load data: ". `String(err)` on
+ * an Error prefixes "Error: ", which reads as "…data: Error: /api/… -> 500". */
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }

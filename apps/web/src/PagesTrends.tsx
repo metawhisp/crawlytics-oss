@@ -93,16 +93,16 @@ export function PagesTrends({ site }: { site: string }) {
         </div>
       </div>
       {!data || data.dates.length === 0 ? (
-        <Placeholder state={state} empty="Нет данных за период" />
+        <Placeholder state={state} empty="No data for this period" />
       ) : series.length === 0 ? (
-        <div className="empty">Выберите страницы для графика</div>
+        <div className="empty">Pick pages to chart</div>
       ) : (
         <TrendChart dates={data.dates} series={series} />
       )}
       {data && data.pages.length > 0 ? (
         <div className="pageselect">
           <div className="pageselect-head muted">
-            Страницы (выбрано {selected.length}/{MAX_SELECTED}) — топ-10 показаны сразу
+            Pages ({selected.length}/{MAX_SELECTED} selected) — top 10 shown by default
           </div>
           <div className="pageselect-list">
             {data.pages.map((p) => {

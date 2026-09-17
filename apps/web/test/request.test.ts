@@ -4,7 +4,7 @@ import { failed, idle, refreshed, started, succeeded } from "../src/request.js";
 
 // Every panel in this app used to write `.catch(() => setData(null))` by hand,
 // and `data === null` also meant "the very first render, request still in
-// flight". So a healthy backend showed "AI-боты не упирались в ошибки — отлично"
+// flight". So a healthy backend showed "AI bots hit no errors — nothing to fix"
 // while the request was still on the wire, and a rejected request showed the
 // same sentence forever. Three outcomes were living in one value; this module
 // is the layer that was missing between `api.ts` (which throws honestly) and
@@ -37,8 +37,8 @@ describe("failed", () => {
   });
 
   it("does not stutter the word Error into the sentence the panel prints", () => {
-    // The panel renders "Не удалось загрузить данные: {message}", and
-    // String(new Error(x)) is "Error: x", which read as "…данные: Error: …".
+    // The panel renders "Could not load data: {message}", and
+    // String(new Error(x)) is "Error: x", which read as "…data: Error: …".
     const state = failed(started(idle<string[]>(), 1), 1, new Error("/api/v1/security -> 500"));
     expect(state.message).toBe("/api/v1/security -> 500");
   });
@@ -87,7 +87,7 @@ describe("request numbers, not an alive flag", () => {
   it("a new request drops the previous answer — it answered a different question", () => {
     // This assertion is the reverse of the one it replaces, and the reversal is
     // the point. Carrying the old answer forward looked like a kindness
-    // (no flash of "Загрузка…" when the period changes) and was a lie in every
+    // (no flash of "Loading…" when the period changes) and was a lie in every
     // panel keyed by a subject: picking a second bot rendered the FIRST bot's
     // timeseries, pages and sources under the second bot's headings, and a
     // refusal froze that mislabelled screen permanently. Step 5 of the wizard

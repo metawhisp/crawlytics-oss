@@ -331,7 +331,7 @@ describe("what the operator can see", () => {
     // sensor that silently recognises nothing is the failure mode this product
     // exists to prevent in other people's sites.
     const summary = { batchesPosted: 0, bytesRead: 12, rejected: 0, eventsSent: 0, linesRead: 400, skipped: 400 };
-    expect(formatImportSummary(summary)).toMatch(/не|not|no events|check|формат|--format/i);
+    expect(formatImportSummary(summary)).toMatch(/not|no events|check|--format/i);
     expect(importExitCode(summary)).toBe(1);
   });
 
@@ -360,6 +360,6 @@ describe("what the operator can see", () => {
       undelivered: 0
     });
     expect(line).toMatch(/300/);
-    expect(line).toMatch(/skip|пропущ/i);
+    expect(line).toMatch(/skip/i);
   });
 });

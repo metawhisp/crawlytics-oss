@@ -8,6 +8,7 @@ import {
   type CrawlToReferRow
 } from "./api.js";
 import { fmtNum, timeAgo } from "./format.js";
+import { classifyVendors, perVisitorText, type Verdict } from "./takeGive.js";
 import { Placeholder } from "./Placeholder.js";
 import { useRequest } from "./request.js";
 
@@ -45,26 +46,47 @@ function BarList({ rows }: { rows: Array<{ label: string; value: number }> }) {
   );
 }
 
-// Take-vs-give verdict thresholds (clicks per crawl).
-const TAKER_MAX_RATIO = 0.01;
-const LOW_MAX_RATIO = 0.1;
-
-function verdictFor(row: CrawlToReferRow): { cls: string; label: string } {
-  if (!row.hasAssistant) {
-    // No consumer assistant exists — zero clicks is expected, not a verdict.
-    return { cls: "b-other", label: "no assistant" };
+/** The words the panel shows, and how loud each one is.
+ *
+ * "only takes" and "sent nobody" are both candidates for a block, and both are
+ * red so the eye lands on them; the distinction — one cannot ever send anyone,
+ * the other could and did not — is carried by the words. The previous version
+ * put the first of those in a neutral grey badge reading "no assistant", which
+ * muted the single clearest row on the page: a quarter of one site's crawl
+ * budget that can only ever cost it. */
+function verdictLabel(verdict: Verdict): { cls: string; label: string; title: string } {
+  switch (verdict.kind) {
+    case "only-takes":
+      return {
+        cls: "b-spoofed",
+        label: "only takes",
+        title: "This vendor has no assistant that could send anyone. Zero referrals here is by design, not a failure."
+      };
+    case "sent-nobody":
+      return {
+        cls: "b-spoofed",
+        label: "sent nobody",
+        title: "It has an assistant, it crawled enough, and it sent zero people."
+      };
+    case "not-enough":
+      return {
+        cls: "b-other",
+        label: "not enough data",
+        title: `Fewer than ${String(verdict.needed)} crawls: at this site's best rate of return, zero referrals would still be the likeliest outcome here, through no fault of the vendor.`
+      };
+    case "sends-without-crawling":
+      return {
+        cls: "b-verified",
+        label: "sends without crawling",
+        title: "People arrive from an assistant whose crawler this site has never seen."
+      };
+    default:
+      return {
+        cls: "b-verified",
+        label: "sends people",
+        title: "Sends people."
+      };
   }
-  if (row.ratio === null) {
-    // No observed crawls: clicks came anyway -> pure sender; no data at all -> dash.
-    return row.clicks > 0 ? { cls: "b-verified", label: "sender" } : { cls: "b-other", label: "—" };
-  }
-  if (row.ratio < TAKER_MAX_RATIO) {
-    return { cls: "b-spoofed", label: "taker" };
-  }
-  if (row.ratio < LOW_MAX_RATIO) {
-    return { cls: "b-other", label: "low" };
-  }
-  return { cls: "b-verified", label: "sender" };
 }
 
 function TakeGive({ site, days }: { site: string; days: number }) {
@@ -74,7 +96,7 @@ function TakeGive({ site, days }: { site: string; days: number }) {
   return (
     <div className="card">
       <div className="cardhead">
-        <h3>Take vs Give · краулы против кликов по вендору</h3>
+        <h3>Take vs Give · crawls against clicks, by vendor</h3>
       </div>
       {rows && rows.length > 0 ? (
         <table>
@@ -83,21 +105,23 @@ function TakeGive({ site, days }: { site: string; days: number }) {
               <th>Vendor</th>
               <th className="num" title="AI crawl hits by this vendor's bots">Crawls</th>
               <th className="num" title="Human clicks from this vendor's assistant">Clicks</th>
-              <th className="num" title="Clicks per crawl">Ratio</th>
+              <th className="num" title="How many of this vendor's crawls it takes to get one visitor">Price per visitor</th>
               <th>Verdict</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
-              const verdict = verdictFor(row);
+            {classifyVendors(rows).map((row) => {
+              const verdict = verdictLabel(row.verdict);
               return (
                 <tr key={row.vendor}>
                   <td>{row.vendor}</td>
                   <td className="num">{fmtNum(row.crawls)}</td>
                   <td className="num">{fmtNum(row.clicks)}</td>
-                  <td className="num muted">{row.ratio === null ? "—" : row.ratio.toFixed(3)}</td>
+                  <td className="num muted">
+                    {row.verdict.kind === "sends" && row.ratio !== null ? perVisitorText(row.ratio) : "—"}
+                  </td>
                   <td>
-                    <span className={`badge ${verdict.cls}`}>{verdict.label}</span>
+                    <span className={`badge ${verdict.cls}`} title={verdict.title}>{verdict.label}</span>
                   </td>
                 </tr>
               );
@@ -105,7 +129,7 @@ function TakeGive({ site, days }: { site: string; days: number }) {
           </tbody>
         </table>
       ) : (
-        <Placeholder state={state} empty="Нет данных по вендорам за период" />
+        <Placeholder state={state} empty="No vendor data for this period" />
       )}
     </div>
   );
@@ -124,7 +148,7 @@ export function Citations({ site }: { site: string }) {
     <>
       <div className="card">
         <div className="cardhead">
-          <h3>Что AI забирает и откуда приходят люди · по реальному трафику</h3>
+          <h3>What AI takes and where people arrive from · from real traffic</h3>
           <a className="csv" href={exportDailyCsvUrl(site, days, "citations")} download>
             CSV
           </a>
@@ -143,8 +167,8 @@ export function Citations({ site }: { site: string }) {
                 <th>Page</th>
                 <th title="Live fetches by assistants answering a user (ai_fetcher)">Fetched live</th>
                 <th title="AI search indexers that surface answers (ai_search)">Surfaced</th>
-                <th title="Люди, пришедшие по ссылке из ответа ассистента. Считается по Referer браузера — это единственный сигнал, что ссылку показали, и подтвердить его мы не можем">Clicked</th>
-                <th>Последнее обращение</th>
+                <th title="People who arrived through a link in an assistant's answer. Counted from the browser Referer, the only signal that the link was shown, and one we cannot verify">Clicked</th>
+                <th>Last hit</th>
               </tr>
             </thead>
             <tbody>
@@ -160,11 +184,11 @@ export function Citations({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <Placeholder state={state} empty="За этот период AI не забирал страницы и переходов не было" />
+          <Placeholder state={state} empty="In this period AI took no pages and sent nobody" />
         )}
         {data && data.infra?.length ? (
           <p className="note">
-            Не страницы, а служебные файлы и ассеты:{" "}
+            Not pages, but service files and assets:{" "}
             {data.infra.map((row) => `${row.page} — ${String(row.hits)}`).join(", ")}
           </p>
         ) : null}
@@ -173,22 +197,22 @@ export function Citations({ site }: { site: string }) {
       <div className="grid2">
         <div className="card">
           <div className="cardhead">
-            <h3>Кто присылает людей</h3>
+            <h3>Who sends people</h3>
           </div>
           {data && data.bySource.length > 0 ? (
             <BarList rows={data.bySource.map((row) => ({ label: sourceLabel(row.source), value: row.clicks }))} />
           ) : (
-            <Placeholder state={state} empty="Нет переходов из AI" />
+            <Placeholder state={state} empty="No AI referrals" />
           )}
         </div>
         <div className="card">
           <div className="cardhead">
-            <h3>Кто краулит</h3>
+            <h3>Who crawls</h3>
           </div>
           {data && data.byOperator.length > 0 ? (
             <BarList rows={data.byOperator.map((row) => ({ label: row.operator, value: row.crawls }))} />
           ) : (
-            <Placeholder state={state} empty="Нет AI-краулов" />
+            <Placeholder state={state} empty="No AI crawls" />
           )}
         </div>
       </div>
@@ -197,7 +221,7 @@ export function Citations({ site }: { site: string }) {
 
       <div className="card">
         <div className="cardhead">
-          <h3>Live: retrieval-боты сейчас</h3>
+          <h3>Live: retrieval bots right now</h3>
         </div>
         {data && data.feed.length > 0 ? (
           <table>
@@ -227,7 +251,7 @@ export function Citations({ site }: { site: string }) {
             </tbody>
           </table>
         ) : (
-          <Placeholder state={state} empty="Нет свежих обращений retrieval-ботов" />
+          <Placeholder state={state} empty="No recent hits from retrieval bots" />
         )}
       </div>
     </>

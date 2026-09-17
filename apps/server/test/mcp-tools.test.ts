@@ -85,7 +85,7 @@ describe("mcp tool catalog", () => {
     }
   });
 
-  it("никакой тул не принимает site — сайт берётся из ключа", () => {
+  it("no tool accepts a site — the site comes from the key", () => {
     for (const tool of MCP_TOOLS) {
       const properties = tool.inputSchema["properties"] as Record<string, unknown>;
       expect(Object.keys(properties)).not.toContain("site");
