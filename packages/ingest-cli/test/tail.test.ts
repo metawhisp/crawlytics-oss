@@ -9,9 +9,9 @@ import { formatImportSummary, importExitCode } from "../src/import.js";
 import { formatTailHeartbeat, tailLogFile, type TailPoster } from "../src/tail.js";
 
 const FIRST_LINE =
-  '203.0.113.10 - frank [10/Jun/2026:03:22:01 +0300] "GET /robots.txt HTTP/1.1" 200 412 "-" "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot"';
+  '203.0.113.10 - frank [10/Jun/2026:00:22:01 +0000] "GET /robots.txt HTTP/1.1" 200 412 "-" "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot"';
 const SECOND_LINE =
-  '2001:db8::1 - - [10/Jun/2026:03:23:02 +0300] "GET /blog/ai-crawlers?utm_source=chatgpt.com HTTP/2" 200 2048 "https://chatgpt.com/" "Mozilla/5.0"';
+  '2001:db8::1 - - [10/Jun/2026:00:23:02 +0000] "GET /blog/ai-crawlers?utm_source=chatgpt.com HTTP/2" 200 2048 "https://chatgpt.com/" "Mozilla/5.0"';
 
 const tempDirs: string[] = [];
 

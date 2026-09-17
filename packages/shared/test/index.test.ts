@@ -16,7 +16,7 @@ const VALID_EVENT = {
 describe("rawLogEventSchema", () => {
   it("accepts a valid event and applies defaults", () => {
     const parsed = rawLogEventSchema.parse({
-      ts: "2026-06-10T03:22:01+03:00",
+      ts: "2026-06-10T03:22:01-05:00",
       ip: "2001:db8::1",
       method: "POST",
       path: "/x?a=1",

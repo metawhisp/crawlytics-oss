@@ -61,7 +61,7 @@ describe("log parsers", () => {
 
   it("converts nginx local time offsets to the same instant", () => {
     const event = parseLine(
-      '203.0.113.10 - - [10/Jun/2026:03:22:01 +0300] "GET / HTTP/1.1" 200 1 "-" "-"',
+      '203.0.113.10 - - [10/Jun/2026:03:22:01 -0500] "GET / HTTP/1.1" 200 1 "-" "-"',
       "nginx-combined"
     );
 
@@ -69,8 +69,8 @@ describe("log parsers", () => {
       throw new Error("expected nginx timezone fixture to parse");
     }
 
-    expect(event.ts).toBe("2026-06-10T00:22:01.000Z");
-    expect(new Date(event.ts).getTime()).toBe(Date.UTC(2026, 5, 10, 0, 22, 1));
+    expect(event.ts).toBe("2026-06-10T08:22:01.000Z");
+    expect(new Date(event.ts).getTime()).toBe(Date.UTC(2026, 5, 10, 8, 22, 1));
   });
 });
 
